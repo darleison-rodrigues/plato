@@ -46,6 +46,8 @@ The goal of plato is to provide a frictionless, "plug and play" experience for t
 - **🧠 Intelligent Extraction**: Uses local LLMs to build a knowledge graph and vector index from your documents, enabling both semantic search and structured queries.
 - **💬 Conversational Interface**: Use the `chat` command to ask questions and get answers directly from your knowledge base.
 - **🧩 Simple & File-Based**: No external databases or complex setup required. The knowledge graph is stored in your project directory.
+- **📊 Visualization**: Automatically generate interactive knowledge graph diagrams (Mermaid, GraphViz) to see connections in your data.
+- **📝 Context Export**: Export your knowledge base to structured Markdown (`context.md`) specially formatted for LLM context windows.
 - **⚙️ Configurable Models**: Easily configure which Ollama models to use for different tasks (e.g., a powerful model for extraction, a fast model for chat).
 
 ## Quick Start
@@ -59,8 +61,10 @@ Ensure you have [Ollama](https://ollama.com) installed and running.
 Pull the default models thatplato uses. You can change these later in `config.yaml`.
 
 ```bash
-ollama pull embeddinggemma
-ollama pull qwen2.5-coder
+ollama pull lfm2.5-thinking
+ollama pull qwen2.5-coder:3b
+ollama pull deepseek-ocr
+ollama pull nomic-embed-text
 ollama pull dolphin-phi
 ```
 
@@ -96,12 +100,12 @@ plato chat
 
 ## Command Reference
 
-### `plato process <directory>`
+### `plato process <directory> [--concurrency N]`
 
 This is the core command for ingesting documents.
 
-- It takes one argument: the path to the directory containing your documents.
-- It recursively finds all supported files, parses them, and builds/updates your local knowledge graph and vector store.
+- **`directory`**: Path to the directory containing your documents.
+- **`--concurrency N`**: (Optional) Number of concurrent files to process. Defaults to 2. Use 1 for low-RAM devices, 4+ for M1/M2/M3.
 
 ### `plato chat`
 
@@ -109,6 +113,27 @@ Starts an interactive chat session with the knowledge base you've built.
 
 - Ask questions in natural language.
 - Type `exit` or `quit` to end the session.
+
+### `plato visualize`
+
+Generates an interactive visualization of your knowledge graph.
+
+- **`--format`**: Output format (`mermaid`, `graphviz`, `json`). Defaults to `mermaid`.
+- **`--limit N`**: Max nodes to display (default 50).
+- Opens an HTML file with the interactive graph.
+
+### `plato export`
+
+Exports the knowledge base for external use.
+
+- **`--format`**: Output format (`markdown`, `json`). Defaults to `markdown`.
+- Generates a `context.md` file ideal for pasting into LLM prompts.
+
+---
+
+## 🗺️ Roadmap & Backlog
+
+See [BACKLOG.md](BACKLOG.md) for our detailed roadmap, including planned features like Entity Resolution, Deep Search, and UI improvements.
 
 ---
 *Built with ❤️ for the curious.*

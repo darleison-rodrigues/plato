@@ -28,12 +28,34 @@ class Pipeline:
         self.output_dir = Path(self.config.pipeline.output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
-        # Components
-        self.pdf_processor = PDFProcessor() # For initial PDF -> MD conversion
-        self.llm_client = OllamaClient()
-        self.graph_rag = GraphRAGPipeline(storage_dir=str(self.output_dir / "storage"))
+        # Components - Lazy Initialized
+        # This prevents long startup times on slower hardware (i3/M1)
+        # Components are only loaded when actually needed for processing
+        self._pdf_processor = None
+        self._llm_client = None
+        self._graph_rag = None
         
         self._setup_logging()
+        
+    @property
+    def pdf_processor(self):
+        if not self._pdf_processor:
+            self._pdf_processor = PDFProcessor()
+        return self._pdf_processor
+
+    @property
+    def llm_client(self):
+        if not self._llm_client:
+            self.logger.info("Initializing Ollama Client...")
+            self._llm_client = OllamaClient()
+        return self._llm_client
+
+    @property
+    def graph_rag(self):
+        if not self._graph_rag:
+            self.logger.info("Initializing GraphRAG Pipeline...")
+            self._graph_rag = GraphRAGPipeline(storage_dir=str(self.output_dir / "storage"))
+        return self._graph_rag
         
     def _setup_logging(self):
         logging.basicConfig(
@@ -72,12 +94,17 @@ class Pipeline:
             if pdf_path.suffix.lower() == '.pdf':
                 self.logger.info("Converting PDF to Markdown...")
                 loop = asyncio.get_running_loop()
-                # Offload blocking PDF operations to executor
-                text, _ = await loop.run_in_executor(
-                    None, 
-                    self.pdf_processor.convert_to_markdown,
-                    str(pdf_path)
-                )
+                # DX: Offload CPU-intensive PDF parsing to a thread executor.
+                # This prevents the async event loop from blocking, which is critical
+                # for responsiveness on lower-end hardware (i3/M1).
+                try:
+                    text, _ = await loop.run_in_executor(
+                        None, 
+                        self.pdf_processor.convert_to_markdown,
+                        str(pdf_path)
+                    )
+                except Exception as e:
+                    raise RuntimeError(f"PDF Conversion failed: {e}")
                 
                 temp_md_path = self.output_dir / f"{doc_id}.md"
                 # Write temp file (blocking but fast enough, or use aiofiles if strict)
@@ -88,10 +115,13 @@ class Pipeline:
 
             # Step 2: Extraction (Contexter Pattern)
             self.logger.info("Extracting knowledge...")
-            extraction_results: List[ExtractionResult] = await self.llm_client.process_document_complete(
-                source_path, 
-                doc_id
-            )
+            try:
+                extraction_results: List[ExtractionResult] = await self.llm_client.process_document_complete(
+                    source_path, 
+                    doc_id
+                )
+            except Exception as e:
+                raise RuntimeError(f"LLM Extraction failed: {e}")
             
             # Step 3: Ingestion into GraphRAG
             self.logger.info("Ingesting into GraphRAG...")
@@ -124,7 +154,10 @@ class Pipeline:
             
             # Batch insert documents
             if llama_docs:
-                self.graph_rag.insert_documents(llama_docs)
+                try:
+                    self.graph_rag.insert_documents(llama_docs)
+                except Exception as e:
+                    raise RuntimeError(f"Graph Ingestion failed: {e}")
             
             result_stats["success"] = True
             self.logger.info(f"Completed {doc_id}. Stats: {result_stats}")
@@ -142,16 +175,20 @@ class Pipeline:
             
         return result_stats
 
-    def process_directory(self, input_dir: str) -> List[Dict]:
-        """Synchronous wrapper for directory processing with concurrency limits"""
+    def process_directory(self, input_dir: str, max_concurrent: int = 2) -> List[Dict]:
+        """
+        Wrapper for directory processing with configurable concurrency.
+        
+        Args:
+            input_dir: Directory containing PDFs/MDs
+            max_concurrent: Max concurrent documents (defaults to 2 for edge safety)
+        """
         input_path = Path(input_dir)
         files = list(input_path.glob("*.pdf")) + list(input_path.glob("*.md"))
         
-        # Concurrency limit for edge devices
-        # M1/high-end can handle more, low-end should be 1-2
-        # We could make this dynamic based on hardware profile, but 2 is a safe default
-        MAX_CONCURRENT_DOCS = 2
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOCS)
+        # DX: Concurrency limit prevents OOM on edge devices.
+        # Configurable via CLI/App for power users.
+        semaphore = asyncio.Semaphore(max_concurrent)
 
         async def _process_limited(f):
             async with semaphore:

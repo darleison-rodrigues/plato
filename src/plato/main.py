@@ -121,7 +121,8 @@ def process(
     input_dir: Path = typer.Argument(
         "./plato/documents",
         help="Directory containing documents to process"
-    )
+    ),
+    concurrency: int = typer.Option(2, help="Max concurrent files to process"),
 ):
     """
     Process documents into the Knowledge Graph.
@@ -140,7 +141,7 @@ def process(
         console.print("[yellow]No documents found to process.[/yellow]")
         return
 
-    console.print(f"[bold cyan]Starting Processing Pipeline for {len(files)} files...[/bold cyan]")
+    console.print(f"[bold cyan]Starting Processing Pipeline for {len(files)} files (Concurrency: {concurrency})...[/bold cyan]")
     
     # Progress Bar Context
     with Progress(
@@ -152,9 +153,10 @@ def process(
     ) as progress:
         
         main_task = progress.add_task("[green]Total Progress", total=len(files))
+        semaphore = asyncio.Semaphore(concurrency)
         
-        async def process_all():
-            for file_path in files:
+        async def process_single(file_path: Path):
+            async with semaphore:
                 task_id = progress.add_task(f"Processing {file_path.name}...", total=None)
                 try:
                     # Run async processing
@@ -168,9 +170,13 @@ def process(
                         
                 except Exception as e:
                     progress.print(f"[red]Error processing {file_path.name}: {e}[/red]")
-                
-                progress.remove_task(task_id)
-                progress.advance(main_task)
+                finally:
+                    progress.remove_task(task_id)
+                    progress.advance(main_task)
+
+        async def process_all():
+            tasks = [process_single(f) for f in files]
+            await asyncio.gather(*tasks)
 
         # Run async loop
         asyncio.run(process_all())

@@ -307,7 +307,7 @@ class OllamaClient:
         Stream entity types as they're extracted
         Allows TUI to show progressive results
         """
-        model = self.config.get_model_for_task('reasoning') # Use reasoning model for extraction
+        # model = self.config.get_model_for_task('reasoning') # Deprecated
         prompts = get_config().prompts
         # Fallback prompt if not configured
         prompt_tmpl = prompts.get('entity_extraction', "Extract entities from: {text}") 
@@ -350,7 +350,7 @@ class OllamaClient:
         """
         Extract relationships with document context preservation
         """
-        model = self.config.get_model_for_task('reasoning')
+        # model = self.config.get_model_for_task('reasoning')
         prompts = get_config().prompts
         prompt_tmpl = prompts.get('relation_extraction', "Extract relations from: {text}")
         prompt = prompt_tmpl.format(text=doc_context.text)
@@ -383,7 +383,7 @@ class OllamaClient:
     
     async def summarize(self, doc_context: DocumentContext, max_length: int = 200) -> str:
         """Generate summary with document tracking"""
-        model = self.config.get_model_for_task('reasoning')
+        # model = self.config.get_model_for_task('reasoning')
         prompt = f"Summarize in ~{max_length} words:\n\n{doc_context.text}"
         
         messages = [{"role": "user", "content": prompt}]
@@ -401,7 +401,7 @@ class OllamaClient:
         if not text:
             return []
         try:
-            embedding_model = self.config.models_by_task.get('embedding', 'embeddinggemma')
+            embedding_model = self.config.get_model_name('embedding')
             response = ollama.embeddings(model=embedding_model, prompt=text)
             return response.get('embedding', [])
         except Exception as e:
