@@ -12,12 +12,12 @@ sys.modules['chromadb.config'] = MagicMock()
 sys.modules['ollama'] = MagicMock()
 
 # Now we can import
-from contexter.store import VectorStore
+from plato.store import VectorStore
 
 class TestVectorStore(unittest.TestCase):
     def setUp(self):
-        self.mock_config_get = patch('contexter.store.get_config').start()
-        self.mock_ollama = patch('contexter.store.OllamaClient').start()
+        self.mock_config_get = patch('plato.store.get_config').start()
+        self.mock_ollama = patch('plato.store.OllamaClient').start()
         
         # Setup mock config
         self.mock_config = MagicMock()
@@ -29,7 +29,7 @@ class TestVectorStore(unittest.TestCase):
         self.mock_config_get.return_value = self.mock_config
         
         # Initialize store
-        with patch('contexter.store.chromadb.PersistentClient') as mock_client:
+        with patch('plato.store.chromadb.PersistentClient') as mock_client:
             self.store = VectorStore()
             self.mock_collection = mock_client.return_value.get_or_create_collection.return_value
 

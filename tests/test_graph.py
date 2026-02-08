@@ -1,4 +1,4 @@
-from contexter.graph import KnowledgeGraphBuilder
+from plato.graph import KnowledgeGraphBuilder
 import networkx as nx
 import os
 

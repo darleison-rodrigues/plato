@@ -2,8 +2,11 @@
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [project]
-name = "contexter"
+name = "plato"
 version = "0.1.0"
 authors = [
   { name="Darleison Filho" },
@@ -12,16 +15,20 @@ description = "Local-first PDF to Knowledge Graph & Semantic Search Pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "docling",
     "networkx",
-    "pydantic",
+    "pydantic>=2.0",
     "pyyaml",
     "ollama",
-    "chromadb",
     "matplotlib",
     "spacy",
     "pandas",
+    "typer",
+    "rich",
+    # LlamaIndex Core & Extensions
+    "llama-index-core",
+    "llama-index-embeddings-huggingface",
+    "llama-index-llms-ollama",
 ]
 
 [project.scripts]
-contexter = "main:main"
+plato = "main:main"

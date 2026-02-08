@@ -3,49 +3,44 @@ import yaml
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 # Setup logging
 logger = logging.getLogger(__name__)
 
 class OllamaConfig(BaseModel):
-    model: str = Field(default="llama3.2:latest")
-    base_url: str = Field(default="http://localhost:11434")
-    timeout: int = Field(default=60, ge=10, le=3600)  # Min 10s, Max 1h
-    max_retries: int = Field(default=3, ge=0, le=10)
+    # Default model for general chat and reasoning
+    chat_model: str = Field(default="dolphin-phi")
+    # Model optimized for structured data extraction
+    extraction_model: str = Field(default="qwen2.5-coder")
+    # High-performance local embedding model
+    embedding_model: str = Field(default="embedding-gemma")
+    base_url: str = Field(default_factory=lambda: os.getenv('OLLAMA_HOST', "http://localhost:11434"))
+    timeout: int = Field(default=120, ge=30)
+    max_retries: int = Field(default=3, ge=1, le=5)
 
-    @validator('base_url')
+    @field_validator('base_url')
     def validate_base_url(cls, v):
         if not v.startswith(('http://', 'https://')):
             raise ValueError('base_url must start with http:// or https://')
         return v.rstrip('/')
 
-class ChromaConfig(BaseModel):
-    persist_directory: str = Field(default="./chroma_db")
-    collection_name: str = Field(default="pdf_documents")
-    embedding_model: str = Field(default="nomic-embed-text:latest")
-
 class PipelineConfig(BaseModel):
-    chunk_size: int = Field(default=1000, ge=100, le=10000)
-    chunk_overlap: int = Field(default=200, ge=0, le=2000)
-    max_chunks_for_context: int = Field(default=5, ge=1, le=50)
+    chunk_size: int = Field(default=512, ge=100, le=4096)
+    chunk_overlap: int = Field(default=50, ge=0, le=1024)
     output_dir: str = Field(default="output")
-    max_concurrent_pdfs: int = Field(default=3, ge=1, le=20)
-    enable_visualization: bool = Field(default=True)
 
-    @validator('chunk_overlap')
-    def validate_overlap(cls, v, values):
-        if 'chunk_size' in values and v >= values['chunk_size']:
+    @field_validator('chunk_overlap')
+    def validate_overlap(cls, v, info):
+        if 'chunk_size' in info.data and v >= info.data['chunk_size']:
             raise ValueError('chunk_overlap must be less than chunk_size')
         return v
 
 class KnowledgeGraphConfig(BaseModel):
-    max_visualization_nodes: int = Field(default=50, ge=10, le=500)
-    enable_visualization: bool = Field(default=True)
+    max_visualization_nodes: int = Field(default=100, ge=10, le=1000)
 
 class Config(BaseModel):
     ollama: OllamaConfig
-    chroma: ChromaConfig
     pipeline: PipelineConfig
     knowledge_graph: KnowledgeGraphConfig
     prompts: Dict[str, str] = Field(default_factory=dict)

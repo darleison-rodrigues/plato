@@ -5,3 +5,7 @@ __pycache__
 .idea   
 /__pycache__
 /documents
+/chroma_db
+/output
+/plato.egg-info
+.pytest_cache

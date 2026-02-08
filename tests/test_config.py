@@ -1,6 +1,6 @@
 import os
 import unittest
-from contexter.config import ConfigManager, Config
+from plato.config import ConfigManager, Config
 
 class TestConfig(unittest.TestCase):
     def setUp(self):
@@ -15,9 +15,6 @@ class TestConfig(unittest.TestCase):
             
         config = self.manager.load_config()
         self.assertEqual(config.environment, "development")
-        # pipeline value should be merged from development section
-        # We manually set max_concurrent_pdfs to 2 in development in config.yaml
-        self.assertEqual(config.pipeline.max_concurrent_pdfs, 2)
 
     def test_production_inheritance(self):
         """Test production environment inheritance"""
@@ -30,10 +27,6 @@ class TestConfig(unittest.TestCase):
         config = self.manager.load_config()
         
         self.assertEqual(config.environment, "production")
-        # Should override base default (3) and dev (2) with prod value (6)
-        self.assertEqual(config.pipeline.max_concurrent_pdfs, 6)
-        # Should enable_visualization=False in prod
-        self.assertFalse(config.pipeline.enable_visualization)
         
         del os.environ["ENVIRONMENT"]
 

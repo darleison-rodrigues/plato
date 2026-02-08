@@ -1,29 +1,25 @@
-.PHONY: setup start process search stats docker-up docker-down
+.PHONY: setup dev build docker-run test help clean
 
-setup:
-	@echo "Installing dependencies..."
-	pip install -r requirements.txt
-	@echo "Checking Ollama..."
-	ollama serve & > /dev/null 2>&1 || true
-	@echo "Pulling models..."
-	ollama pull llama3.2:3b
-	ollama pull nomic-embed-text
+PYTHON := python3
+VENV := .venv
+BIN := $(VENV)/bin
 
-start:
-	@python main.py --help
+# Default target
+help:
+	@echo "Contexter Management Commands (Native First)"
+	@echo "============================================"
+	@echo "make setup      - Create venv and install dependencies (Native)"
+	@echo "make dev        - Run interactive TUI session (Native)"
+	@echo "make test       - Run tests (Native)"
+	@echo "make clean      - Clean up artifacts"
+	@echo ""
 
-process:
-	@python main.py process documents/ --batch
 
-search:
-	@python main.py search "$(QUERY)"
+test:
+	$(BIN)/pytest tests/
 
-stats:
-	@python main.py stats
-
-docker-up:
-	docker compose up -d --build
-	@echo "Services started. Run 'docker compose exec app python main.py --help' to use."
-
-docker-down:
-	docker compose down
+clean:
+	rm -rf __pycache__
+	rm -rf .pytest_cache
+	rm -rf output/*.md
+	rm -rf output/*.json
