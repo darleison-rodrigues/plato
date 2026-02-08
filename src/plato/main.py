@@ -19,6 +19,9 @@ try:
     from plato.graph_rag import GraphRAGPipeline
     from plato.parser import DocumentParser
     from plato.config import get_config
+    from plato.visualize import GraphVisualizer
+    import json
+    import yaml
 except ImportError as e:
     # Try adding src to path if running directly
     current_dir = Path(__file__).resolve().parent
@@ -221,6 +224,169 @@ def show():
         # stats = pipeline.graph_rag.get_stats() ...
     else:
         console.print("[yellow]No knowledge graph found yet.[/yellow]")
+
+@app.command()
+def visualize(
+    output: Path = typer.Option("graph.html", help="Output file path"),
+    format: str = typer.Option("mermaid", help="Format: mermaid, graphviz, or json"),
+    limit: int = typer.Option(50, help="Max nodes to display"),
+    filter_type: str = typer.Option(None, help="Filter by entity type: PERSON, ORG, CONCEPT")
+):
+    """
+    Generate interactive graph visualization.
+    
+    Examples:
+        plato visualize                           # Default: graph.html
+        plato visualize --limit 30                # Limit to 30 nodes
+        plato visualize --filter-type PERSON      # Only show people
+        plato visualize --format graphviz -o graph.dot
+    """
+    pipeline = get_pipeline()
+    
+    console.print("[cyan]Extracting graph data...[/cyan]")
+    
+    try:
+        # Get data from GraphRAG
+        data = pipeline.graph_rag.export_graph_data()
+        
+        entities = data['entities']
+        relations = data['relations']
+        
+        # Filter if requested
+        if filter_type:
+            entities = [e for e in entities if e['type'] == filter_type.upper()]
+            entity_names = {e['name'] for e in entities}
+            relations = [r for r in relations 
+                        if r['source'] in entity_names and r['target'] in entity_names]
+        
+        if not entities:
+            console.print("[yellow]No entities found. Process some documents first.[/yellow]")
+            console.print("[dim]Run: plato process ./documents[/dim]")
+            return
+        
+        console.print(f"[green]Found {len(entities)} entities, {len(relations)} relations[/green]")
+        
+        # Generate diagram
+        with console.status(f"[cyan]Generating {format} diagram...[/cyan]"):
+            viz = GraphVisualizer()
+            
+            if format == "mermaid":
+                mermaid_code = viz.generate_mermaid(entities, relations, max_nodes=limit)
+                html = viz.wrap_mermaid_html(mermaid_code, title="Plato Knowledge Graph")
+                output.write_text(html, encoding='utf-8')
+                
+            elif format == "graphviz":
+                dot_code = viz.generate_graphviz(entities, relations)
+                output.write_text(dot_code, encoding='utf-8')
+                
+            elif format == "json":
+                output.write_text(json.dumps(data, indent=2), encoding='utf-8')
+            
+            else:
+                console.print(f"[red]Unknown format: {format}[/red]")
+                return
+        
+        console.print(f"\n[bold green]✓ Visualization created:[/bold green] {output}")
+        
+        if format == "mermaid":
+            console.print(f"[dim]Open {output} in your browser to view the interactive graph[/dim]")
+        elif format == "graphviz":
+            console.print(f"[dim]Render with: dot -Tpng {output} -o graph.png[/dim]")
+        
+        # Show stats
+        table = Table(title="Graph Statistics")
+        table.add_column("Type", style="cyan")
+        table.add_column("Count", style="magenta")
+        
+        entity_types = {}
+        for e in entities:
+            entity_types[e['type']] = entity_types.get(e['type'], 0) + 1
+        
+        for ent_type, count in sorted(entity_types.items()):
+            table.add_row(ent_type, str(count))
+        
+        table.add_row("—" * 15, "—" * 5, style="dim")
+        table.add_row("TOTAL ENTITIES", str(len(entities)), style="bold")
+        table.add_row("TOTAL RELATIONS", str(len(relations)), style="bold")
+        
+        console.print(table)
+        
+    except Exception as e:
+        handle_error(f"Failed to generate visualization", e)
+
+
+@app.command()
+def export(
+    output: Path = typer.Option("context.md", help="Output file"),
+    format: str = typer.Option("markdown", help="markdown, json, or yaml"),
+    include_graph: bool = typer.Option(True, help="Include graph diagram in MD")
+):
+    """
+    Export knowledge base to file.
+    
+    Examples:
+        plato export                              # context.md with embedded graph
+        plato export --format json -o data.json
+        plato export --no-include-graph           # Just text, no diagram
+    """
+    pipeline = get_pipeline()
+    
+    console.print(f"[cyan]Exporting to {format}...[/cyan]")
+    
+    try:
+        data = pipeline.graph_rag.export_graph_data()
+        
+        if format == "markdown":
+            # Generate comprehensive MD file
+            lines = [
+                "# Knowledge Graph Export",
+                f"\nGenerated by Plato 🦫",
+                f"\n## Summary",
+                f"- **Entities:** {len(data['entities'])}",
+                f"- **Relations:** {len(data['relations'])}",
+            ]
+            
+            # Add graph diagram
+            if include_graph:
+                viz = GraphVisualizer()
+                mermaid = viz.generate_mermaid(data['entities'], data['relations'], max_nodes=30)
+                lines.extend([
+                    "\n## Graph Visualization",
+                    "```mermaid",
+                    mermaid,
+                    "```"
+                ])
+            
+            # Entities by type
+            lines.append("\n## Entities")
+            entity_types = {}
+            for e in data['entities']:
+                if e['type'] not in entity_types:
+                    entity_types[e['type']] = []
+                entity_types[e['type']].append(e['name'])
+            
+            for ent_type, names in sorted(entity_types.items()):
+                lines.append(f"\n### {ent_type}")
+                for name in sorted(names):
+                    lines.append(f"- {name}")
+            
+            # Relations
+            lines.append("\n## Relations")
+            for rel in data['relations']:
+                lines.append(f"- **{rel['source']}** → *{rel['relation']}* → **{rel['target']}**")
+            
+            output.write_text("\n".join(lines), encoding='utf-8')
+            
+        elif format == "json":
+            output.write_text(json.dumps(data, indent=2), encoding='utf-8')
+            
+        elif format == "yaml":
+            output.write_text(yaml.dump(data, default_flow_style=False), encoding='utf-8')
+        
+        console.print(f"[bold green]✓ Exported to {output}[/bold green]")
+        
+    except Exception as e:
+        handle_error(f"Failed to export", e)
 
 if __name__ == "__main__":
     app()

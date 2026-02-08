@@ -95,11 +95,14 @@ class GraphRAGPipeline:
         """
         Insert manual triplets extracted by the OllamaClient.
         This allows us to use our high-quality external extractor and just feed the graph.
+        Also safeguards data to a local JSON for visualization/export.
         """
         from llama_index.core.graph_stores.types import EntityNode, Relation, RelationDirection
+        import json
         
         logger.info(f"Inserting triplets from {source_doc}...")
         
+        # 1. Update LlamaIndex Graph Store
         # Insert Entities
         for entity_type, names in entities.items():
             for name in names:
@@ -128,6 +131,79 @@ class GraphRAGPipeline:
             self.index.property_graph_store.upsert_relations([relation])
             
         self.index.storage_context.persist(persist_dir=str(self.storage_dir))
+
+        # 2. Update Simple JSON Backup (for Visualization/Export)
+        try:
+            storage_file = self.storage_dir / "graph_data.json"
+            
+            if storage_file.exists():
+                try:
+                    data = json.loads(storage_file.read_text(encoding='utf-8'))
+                except json.JSONDecodeError:
+                     data = {'entities': [], 'relations': []}
+            else:
+                data = {'entities': [], 'relations': []}
+            
+            # Track seen entities to avoid heavy dup checking
+            # We use a set of (name, type) tuples for fast lookup
+            existing_entities = {(e['name'], e['type']) for e in data['entities']}
+            existing_relations = set() # We'll build a set of signatures for relations
+            
+            for r in data['relations']:
+                # signature: (source, relation, target)
+                existing_relations.add((r['source'], r['relation'], r['target']))
+
+            # Add new entities
+            for ent_type, ent_list in entities.items():
+                for ent in ent_list:
+                    if (ent, ent_type) not in existing_entities:
+                        data['entities'].append({
+                            'name': ent,
+                            'type': ent_type,
+                            'source_doc': source_doc
+                        })
+                        existing_entities.add((ent, ent_type))
+            
+            # Add new relations
+            for rel in relations:
+                sig = (rel.get('subject'), rel.get('relation'), rel.get('object'))
+                if sig not in existing_relations:
+                    data['relations'].append({
+                        'source': rel.get('subject'),
+                        'target': rel.get('object'),
+                        'relation': rel.get('relation'),
+                        'source_doc': source_doc
+                    })
+                    existing_relations.add(sig)
+            
+            # Save atomically-ish
+            storage_file.write_text(json.dumps(data, indent=2), encoding='utf-8')
+            
+        except Exception as e:
+            logger.warning(f"Failed to update visualization JSON: {e}")
+
+    def export_graph_data(self) -> dict:
+        """
+        Export entities and relations for visualization.
+        """
+        # Primary: Read from our simple JSON backup which is reliable for Vis
+        storage_file = self.storage_dir / "graph_data.json"
+        
+        if storage_file.exists():
+            import json
+            try:
+                return json.loads(storage_file.read_text(encoding='utf-8'))
+            except Exception as e:
+                logger.error(f"Failed to read graph_data.json: {e}")
+                
+        # Fallback: Extract from PropertyGraphIndex if possible
+        # (This is more complex as PGI storage is opaque, but we can iterate if loaded)
+        if hasattr(self.index, 'property_graph_store'):
+            # This is a stub for direct extraction if JSON is missing.
+            # Real implementation would iterate graph_store.get_triplets()
+            pass
+            
+        return {'entities': [], 'relations': []}
 
     def query(self, query_text: str) -> str:
         """
