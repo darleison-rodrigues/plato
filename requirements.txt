@@ -7,3 +7,8 @@ chromadb
 matplotlib
 spacy
 pandas
+typer
+rich
+pandas
+typer
+rich
