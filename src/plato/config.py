@@ -9,12 +9,20 @@ from pydantic import BaseModel, Field, field_validator
 logger = logging.getLogger(__name__)
 
 class OllamaConfig(BaseModel):
-    # Default model for general chat and reasoning
-    chat_model: str = Field(default="dolphin-phi")
-    # Model optimized for structured data extraction
-    extraction_model: str = Field(default="qwen2.5-coder")
-    # High-performance local embedding model
-    embedding_model: str = Field(default="embedding-gemma")
+    # Default high-performance model for general reasoning
+    chat_model: str = Field(default="lfm2.5-thinking") 
+    
+    # Task-specific model mapping
+    models_by_task: Dict[str, str] = Field(default_factory=lambda: {
+        "ocr": "deepseek-ocr",                 # For image-to-text / PDF parsing
+        "reasoning": "lfm2.5-thinking",        # For complex analysis
+        "coding": "qwen2.5-coder",             # For structured data extraction / JSON
+        "vision": "moondream",                 # For general image analysis
+        "embedding": "embedding-gemma",        # For vector embeddings
+        "fast_chat": "dolphin-phi",            # For quick responses
+        "minimal": "smollm2"                   # For very low resource environments
+    })
+
     base_url: str = Field(default_factory=lambda: os.getenv('OLLAMA_HOST', "http://localhost:11434"))
     timeout: int = Field(default=120, ge=30)
     max_retries: int = Field(default=3, ge=1, le=5)
@@ -24,6 +32,10 @@ class OllamaConfig(BaseModel):
         if not v.startswith(('http://', 'https://')):
             raise ValueError('base_url must start with http:// or https://')
         return v.rstrip('/')
+
+    def get_model_for_task(self, task: str) -> str:
+        """Select the best model for a given task"""
+        return self.models_by_task.get(task, self.chat_model)
 
 class PipelineConfig(BaseModel):
     chunk_size: int = Field(default=512, ge=100, le=4096)

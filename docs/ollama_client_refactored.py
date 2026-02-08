@@ -65,7 +65,7 @@ class OllamaClientConfig:
     """Validated configuration for OllamaClient"""
     
     def __init__(self, config_dict: Dict[str, Any]):
-        self.model = config_dict.get('chat_model', 'lfm2.5-thinking')
+        self.model = config_dict.get('model', 'lfm2.5-thinking')
         self.models_by_task = config_dict.get('models_by_task', {})
         self.max_retries = config_dict.get('max_retries', 3)
         self.timeout = config_dict.get('timeout', 60)
@@ -243,8 +243,10 @@ class OllamaClient:
     def _validate_prompts(self):
         """Ensure required prompts are configured"""
         prompts = get_config().prompts
-        # Basic validation, though prompts might be empty in config if not loaded
-        pass 
+        required = ['entity_extraction', 'relation_extraction', 'summarization']
+        for prompt_key in required:
+            if prompt_key not in prompts or not prompts[prompt_key]:
+                raise ValueError(f"Required prompt '{prompt_key}' not configured")
     
     @asynccontextmanager
     async def process_document(self, doc_path: str, doc_id: str):
@@ -284,12 +286,9 @@ class OllamaClient:
         Stream entity types as they're extracted
         Allows TUI to show progressive results
         """
-        model = self.config.get_model_for_task('reasoning') # Use reasoning model for extraction
+        model = self.config.get_model_for_task('entity_extraction')
         prompts = get_config().prompts
-        # Fallback prompt if not configured
-        prompt_tmpl = prompts.get('entity_extraction', "Extract entities from: {text}") 
-        prompt = prompt_tmpl.format(text=doc_context.text)
-        
+        prompt = prompts['entity_extraction'].format(text=doc_context.text)
         system_prompt = "You are a precise entity extraction system. Return only valid JSON with structure: {\"entities\": {\"TYPE\": [values]}}"
         
         messages = [
@@ -327,11 +326,9 @@ class OllamaClient:
         """
         Extract relationships with document context preservation
         """
-        model = self.config.get_model_for_task('reasoning')
+        model = self.config.get_model_for_task('relation_extraction')
         prompts = get_config().prompts
-        prompt_tmpl = prompts.get('relation_extraction', "Extract relations from: {text}")
-        prompt = prompt_tmpl.format(text=doc_context.text)
-        
+        prompt = prompts['relation_extraction'].format(text=doc_context.text)
         system_prompt = "You are a relation extraction system. Return only valid JSON: [{\"subject\": \"...\", \"relation\": \"...\", \"object\": \"...\"}]"
         
         messages = [
@@ -360,7 +357,7 @@ class OllamaClient:
     
     async def summarize(self, doc_context: DocumentContext, max_length: int = 200) -> str:
         """Generate summary with document tracking"""
-        model = self.config.get_model_for_task('reasoning')
+        model = self.config.get_model_for_task('summarization')
         prompt = f"Summarize in ~{max_length} words:\n\n{doc_context.text}"
         
         messages = [{"role": "user", "content": prompt}]
@@ -378,7 +375,7 @@ class OllamaClient:
         if not text:
             return []
         try:
-            embedding_model = self.config.models_by_task.get('embedding', 'embedding-gemma')
+            embedding_model = get_config().chroma.embedding_model
             response = ollama.embeddings(model=embedding_model, prompt=text)
             return response.get('embedding', [])
         except Exception as e:
@@ -437,7 +434,7 @@ class OllamaClient:
         for attempt in range(self.config.max_retries):
             try:
                 # Note: ollama.chat is synchronous, so we run it in executor
-                loop = asyncio.get_running_loop()
+                loop = asyncio.get_event_loop()
                 response = await loop.run_in_executor(
                     None,
                     lambda: ollama.chat(
@@ -479,11 +476,4 @@ class OllamaClient:
                 results.append(entities)
             return results
         
-        try:
-             loop = asyncio.get_event_loop()
-             if loop.is_running():
-                 # We are already in a loop, return a coroutine
-                 return _batch()
-             return asyncio.run(_batch())
-        except RuntimeError:
-             return asyncio.run(_batch())
+        return asyncio.run(_batch())

@@ -24,6 +24,8 @@ dependencies = [
     "pandas",
     "typer",
     "rich",
+    "docling",
+    "chromadb",
     # LlamaIndex Core & Extensions
     "llama-index-core",
     "llama-index-embeddings-huggingface",
