@@ -30,12 +30,12 @@ except ImportError as e:
         from plato.parser import DocumentParser
         from plato.config import get_config
     except ImportError as e2:
-        print(f"Critical Error: Failed to import Platograph modules: {e2}")
+        print(f"Critical Error: Failed to import plato modules: {e2}")
         sys.exit(1)
 
 # Initialize Rich Console
 console = Console()
-app = typer.Typer(help="Platograph: Research Context Assistant", add_completion=False)
+app = typer.Typer(help="plato: Research Context Assistant", add_completion=False)
 
 # Constants
 PLATYPUS_MINI = "🦫"

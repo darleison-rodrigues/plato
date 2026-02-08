@@ -30,15 +30,15 @@ Just as the platypus is one of nature's most unique creatures, your research des
 - ⚡ **Lightweight**: Optimized for consumer hardware (M1/M2 Macs with 8GB RAM).
 
 ## The Workflow
-1.  **Scan**: Dump your PDFs into a folder. Platograph scans them using a fast 1B model to understand what they are.
+1.  **Scan**: Dump your PDFs into a folder.plato scans them using a fast 1B model to understand what they are.
 2.  **Suggest**: The agent looks at your collection and suggests workflows (e.g., "Build a comparison table," "Extract timeline").
-3.  **Build**: You approve, and Platograph constructs a structured `context.md` file properly 
+3.  **Build**: You approve, and plato constructs a structured `context.md` file properly 
 
 > A local-first, schema-driven knowledge extraction tool.
 
 **Platograph** is an intelligent document processor designed for researchers, developers, and product managers. It creates a local, self-hosted knowledge base from your documents and lets you interact with it through a conversational chat interface, all powered by local LLMs via Ollama.
 
-The goal of Platograph is to provide a frictionless, "plug and play" experience for turning a folder of documents into a queryable knowledge graph.
+The goal of plato is to provide a frictionless, "plug and play" experience for turning a folder of documents into a queryable knowledge graph.
 
 ## Core Features
 
@@ -56,7 +56,7 @@ Ensure you have [Ollama](https://ollama.com) installed and running.
 
 **2. Install Models**
 
-Pull the default models that Platograph uses. You can change these later in `config.yaml`.
+Pull the default models thatplato uses. You can change these later in `config.yaml`.
 
 ```bash
 ollama pull embeddinggemma
@@ -64,7 +64,7 @@ ollama pull qwen2.5-coder
 ollama pull dolphin-phi
 ```
 
-**3. Install Platograph**
+**3. Installplato**
 
 Clone the repository and install it in editable mode.
 

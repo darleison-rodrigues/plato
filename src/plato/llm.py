@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
 from pathlib import Path
 import ollama
-from .config import get_config
+from plato.config import get_config
 
 
 @dataclass

@@ -24,13 +24,13 @@ dependencies = [
     "pandas",
     "typer",
     "rich",
-    "docling",
     "chromadb",
+    "pypdf",  # Lightweight PDF support for LlamaIndex
     # LlamaIndex Core & Extensions
     "llama-index-core",
-    "llama-index-embeddings-huggingface",
     "llama-index-llms-ollama",
+    "llama-index-embeddings-ollama",
 ]
 
 [project.scripts]
-plato = "main:main"
+plato = "plato.main:app"

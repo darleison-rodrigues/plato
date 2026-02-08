@@ -10,10 +10,10 @@ from typing import Dict, List, Optional, Any
 
 from llama_index.core import Document
 
-from .parser import PDFProcessor, DocumentParser
-from .llm import OllamaClient, ExtractionResult
-from .graph_rag import GraphRAGPipeline
-from .config import get_config
+from plato.parser import PDFProcessor, DocumentParser
+from plato.llm import OllamaClient, ExtractionResult
+from plato.graph_rag import GraphRAGPipeline
+from plato.config import get_config
 
 
 class Pipeline:

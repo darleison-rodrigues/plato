@@ -1,54 +1,52 @@
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Union
 import logging
-from docling.document_converter import DocumentConverter
+from llama_index.core import SimpleDirectoryReader, Document
 
 logger = logging.getLogger(__name__)
 
 class PDFProcessor:
     """
-    Handles PDF to Markdown conversion using Docling.
+    Handles PDF loading using LlamaIndex native readers for best performance
+    and minimal dependencies.
     """
 
     def __init__(self):
-        self.converter = DocumentConverter()
+        pass
 
     def convert_to_markdown(self, pdf_path: str) -> Tuple[str, str]:
         """
-        Convert a PDF file to Markdown using Docling.
-        
-        Args:
-            pdf_path: Path to the PDF file.
-            
-        Returns:
-            Tuple[str, str]: (markdown_content, output_path)
+        Load PDF text using LlamaIndex.
+        Returns: (text_content, output_path)
         """
         pdf_path_obj = Path(pdf_path)
         if not pdf_path_obj.exists():
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
             
         try:
-            logger.info(f"Converting {pdf_path} using Docling...")
-            result = self.converter.convert(pdf_path_obj)
-            markdown_text = result.document.export_to_markdown()
+            logger.info(f"Loading {pdf_path} using LlamaIndex...")
+            # Use SimpleDirectoryReader for robust local loading
+            reader = SimpleDirectoryReader(input_files=[str(pdf_path_obj)])
+            documents = reader.load_data()
             
-            # Save markdown locally for reference
+            # Combine text from pages
+            full_text = "\n\n".join([doc.text for doc in documents])
+            
+            # Save locally as reference (optional, but keeps interface consistent)
             output_path = pdf_path_obj.with_suffix('.md')
-            output_path.write_text(markdown_text, encoding='utf-8')
+            output_path.write_text(full_text, encoding='utf-8')
             
-            return markdown_text, str(output_path)
+            return full_text, str(output_path)
             
         except Exception as e:
-            logger.error(f"Docling conversion failed for {pdf_path}: {e}")
+            logger.error(f"LlamaIndex loading failed for {pdf_path}: {e}")
             raise
 
     def get_pdf_metadata(self, pdf_path: str) -> Dict[str, Any]:
-        """Extract basic metadata from PDF"""
-        # Docling handles this internally, but we can add a lightweight 
-        # metadata extractor here if needed.
+        """Extract basic metadata"""
         return {
             "source": pdf_path,
-            "processor": "docling"
+            "processor": "llama_index"
         }
 
 class DocumentParser:

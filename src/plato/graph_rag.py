@@ -13,7 +13,7 @@ from llama_index.core.graph_stores import SimplePropertyGraphStore, SimpleGraphS
 
 from llama_index.core.vector_stores.simple import SimpleVectorStore
 from llama_index.llms.ollama import Ollama
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.embeddings.ollama import OllamaEmbedding
 
 from plato.config import get_config
 
@@ -37,8 +37,9 @@ class GraphRAGPipeline:
         logger.info("Configuring global settings for LLM and embeddings...")
         
         # Use embedding model from config
-        Settings.embed_model = HuggingFaceEmbedding(
-            model_name=self.config.ollama.models_by_task.get("embedding", "embeddinggemma")
+        Settings.embed_model = OllamaEmbedding(
+            model_name=self.config.ollama.models_by_task.get("embedding", "embeddinggemma"),
+            base_url=self.config.ollama.base_url
         )
         
         # Use reasoning model for graph maintenance if needed, or extraction model
