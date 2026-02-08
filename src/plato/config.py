@@ -8,20 +8,117 @@ from pydantic import BaseModel, Field, field_validator
 # Setup logging
 logger = logging.getLogger(__name__)
 
+import platform
+import psutil
+
+# Hardware Profiles
+EDGE_MODELS_M1 = {
+    "reasoning": {
+        "model": "lfm2.5-thinking:latest",       # 1.5B, ~1GB
+        "num_ctx": 4096,
+        "temperature": 0.2,
+        "keep_alive": "15m"
+    },
+    
+    "coding": {
+        "model": "qwen2.5-coder:3b",             # 3B, ~2GB
+        "num_ctx": 8192,
+        "temperature": 0.1,
+        "keep_alive": "15m"
+    },
+    
+    "ocr": {
+        "model": "deepseek-ocr:latest",          # 1.3B, ~900MB
+        "num_ctx": 2048,
+        "temperature": 0.0,
+        "keep_alive": "10m"
+    },
+    
+    "embedding": {
+        "model": "nomic-embed-text",             # 137M, ~270MB
+        "dimensions": 768
+    },
+    
+    "fast_chat": {
+        "model": "dolphin-phi:latest",           # 2.7B, ~1.6GB
+        "num_ctx": 4096,
+        "temperature": 0.7,
+        "keep_alive": "10m"
+    },
+    "minimal": {"model": "smollm2:135m"}
+}
+
+EDGE_MODELS_I3 = {
+    "reasoning": {
+        "model": "lfm2.5-thinking:latest",       # 1.5B, ~1GB
+        "num_ctx": 2048,                         # Reduced context
+        "temperature": 0.2,
+        "num_thread": 4,                         # Prevent CPU saturation
+        "keep_alive": "10m"
+    },
+    
+    "coding": {
+        "model": "qwen2.5-coder:1.5b",           # 1.5B, ~1GB (not 3b!)
+        "num_ctx": 4096,
+        "temperature": 0.1,
+        "num_thread": 4,
+        "keep_alive": "10m"
+    },
+    
+    "ocr": {
+        "model": "deepseek-ocr:latest",          # 1.3B, ~900MB
+        "num_ctx": 2048,
+        "temperature": 0.0,
+        "num_thread": 4,
+        "keep_alive": "5m"
+    },
+    
+    "embedding": {
+        "model": "nomic-embed-text",             # 137M, ~270MB
+        "dimensions": 384                        # Reduced dimensions
+    },
+    
+    "fast_chat": {
+        "model": "smollm2:1.7b",                 # 1.7B, ~1GB (faster than dolphin-phi)
+        "num_ctx": 2048,
+        "temperature": 0.7,
+        "num_thread": 4,
+        "keep_alive": "5m"
+    },
+    "minimal": {"model": "smollm2:135m"}
+}
+
+def detect_hardware_profile() -> str:
+    """Auto-detect and return appropriate config key"""
+    try:
+        ram_gb = psutil.virtual_memory().total / (1024**3)
+        cpu = platform.processor() or ""
+        
+        # Mac M1/M2/M3 detection
+        if platform.system() == "Darwin" and ("Apple" in cpu or platform.machine() == 'arm64'):
+            if ram_gb >= 7: # Allow for some OS overhead, 8GB usually shows as ~8
+                return "m1_8gb"
+            else:
+                return "m1_low"  # Fallback
+                
+        # Intel/AMD
+        elif ram_gb >= 7:
+            return "i3_8gb"
+        else:
+            return "low_resource"
+    except Exception as e:
+        logging.warning(f"Hardware detection failed: {e}. Defaulting to safe/low profile.")
+        return "low_resource"
+
 class OllamaConfig(BaseModel):
-    # Default high-performance model for general reasoning
+    # Default high-performance model for general chat
     chat_model: str = Field(default="lfm2.5-thinking") 
     
-    # Task-specific model mapping
-    models_by_task: Dict[str, str] = Field(default_factory=lambda: {
-        "ocr": "deepseek-ocr",                 # For image-to-text / PDF parsing
-        "reasoning": "lfm2.5-thinking",        # For complex analysis
-        "coding": "qwen2.5-coder",             # For structured data extraction / JSON
-        "vision": "moondream",                 # For general image analysis
-        "embedding": "embeddinggemma",        # For vector embeddings
-        "fast_chat": "dolphin-phi",            # For quick responses
-        "minimal": "smollm2"                   # For very low resource environments
-    })
+    # Configuration dict for active profile
+    active_profile: str = Field(default_factory=detect_hardware_profile)
+    
+    # Task-specific configurations (holds full config dicts, not just names)
+    models_config: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
     base_url: str = Field(default_factory=lambda: os.getenv('OLLAMA_HOST', "http://localhost:11434"))
     timeout: int = Field(default=120, ge=30)
@@ -33,9 +130,26 @@ class OllamaConfig(BaseModel):
             raise ValueError('base_url must start with http:// or https://')
         return v.rstrip('/')
 
-    def get_model_for_task(self, task: str) -> str:
-        """Select the best model for a given task"""
-        return self.models_by_task.get(task, self.chat_model)
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Populate models based on detected profile if not manually overridden
+        if not self.models_config:
+            profile = self.active_profile
+            # Default to i3/safe if low resource, upgrade to M1 if detected
+            if profile == "m1_8gb":
+                self.models_config = EDGE_MODELS_M1
+            else:
+                self.models_config = EDGE_MODELS_I3 
+    
+    def get_model_config(self, task: str) -> Dict[str, Any]:
+        """Get full configuration for a task"""
+        # Fallback to defaults or minimal if task missing
+        return self.models_config.get(task, self.models_config.get("minimal", {}))
+
+    def get_model_name(self, task: str) -> str:
+        """Get just the model name for a task"""
+        cfg = self.get_model_config(task)
+        return cfg.get("model", self.chat_model)
 
 class PipelineConfig(BaseModel):
     chunk_size: int = Field(default=512, ge=100, le=4096)

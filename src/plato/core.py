@@ -48,10 +48,7 @@ class Pipeline:
         doc_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Async processing of a single PDF.
-        1. Convert to Markdown (if PDF)
-        2. Extract Entities/Relations/Summary (OllamaClient)
-        3. Insert into GraphRAG (LlamaIndex)
+        Async processing of a single PDF with resource management.
         """
         pdf_path = Path(pdf_path)
         if not doc_id:
@@ -68,18 +65,22 @@ class Pipeline:
             "error": None
         }
         
+        temp_md_path = None
+        
         try:
-            # Step 1: Text Conversion
-            # Check if it's already text/md or needs PDF conversion
+            # Step 1: Text Conversion (Non-blocking)
             if pdf_path.suffix.lower() == '.pdf':
                 self.logger.info("Converting PDF to Markdown...")
-                # Note: pdf_processor is sync, might block loop briefly. 
-                # Ideally run in executor if slow.
-                text, _ = self.pdf_processor.convert_to_markdown(str(pdf_path))
-                # Write to temp file for OllamaClient to read (since it takes path)
-                # Or we can refactor OllamaClient to take text. 
-                # Current OllamaClient.process_document takes a path.
+                loop = asyncio.get_running_loop()
+                # Offload blocking PDF operations to executor
+                text, _ = await loop.run_in_executor(
+                    None, 
+                    self.pdf_processor.convert_to_markdown,
+                    str(pdf_path)
+                )
+                
                 temp_md_path = self.output_dir / f"{doc_id}.md"
+                # Write temp file (blocking but fast enough, or use aiofiles if strict)
                 temp_md_path.write_text(text, encoding='utf-8')
                 source_path = str(temp_md_path)
             else:
@@ -109,7 +110,6 @@ class Pipeline:
                    result_stats["relations_found"] += len(res.relations)
                 
                 # 3b. Prepare for Vector/Text insertion
-                # Create LlamaIndex Document from chunk
                 doc = Document(
                     text=res.doc_context.text,
                     metadata={
@@ -132,23 +132,39 @@ class Pipeline:
         except Exception as e:
             self.logger.error(f"Pipeline failed for {doc_id}: {e}")
             result_stats["error"] = str(e)
+        finally:
+            # Cleanup temp files
+            if temp_md_path and temp_md_path.exists():
+                try:
+                    temp_md_path.unlink()
+                except Exception as e:
+                    self.logger.warning(f"Failed to cleanup temp file {temp_md_path}: {e}")
             
         return result_stats
 
     def process_directory(self, input_dir: str) -> List[Dict]:
-        """Synchronous wrapper for directory processing (useful for CLI/Scripts)"""
+        """Synchronous wrapper for directory processing with concurrency limits"""
         input_path = Path(input_dir)
         files = list(input_path.glob("*.pdf")) + list(input_path.glob("*.md"))
         
+        # Concurrency limit for edge devices
+        # M1/high-end can handle more, low-end should be 1-2
+        # We could make this dynamic based on hardware profile, but 2 is a safe default
+        MAX_CONCURRENT_DOCS = 2
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOCS)
+
+        async def _process_limited(f):
+            async with semaphore:
+                return await self.process_pdf_async(str(f))
+
         results = []
         async def _run_all():
-            tasks = [self.process_pdf_async(str(f)) for f in files]
+            tasks = [_process_limited(f) for f in files]
             return await asyncio.gather(*tasks)
             
         try:
             results = asyncio.run(_run_all())
         except RuntimeError:
-            # Handle running loop override if needed
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             results = loop.run_until_complete(_run_all())

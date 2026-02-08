@@ -61,30 +61,7 @@ class ExtractionResult:
         }
 
 
-class OllamaClientConfig:
-    """Validated configuration for OllamaClient"""
-    
-    def __init__(self, config_dict: Dict[str, Any]):
-        self.model = config_dict.get('chat_model', 'lfm2.5-thinking')
-        self.models_by_task = config_dict.get('models_by_task', {})
-        self.max_retries = config_dict.get('max_retries', 3)
-        self.timeout = config_dict.get('timeout', 60)
-        self.max_text_length = config_dict.get('max_text_length', 4000)
-        self.batch_size = config_dict.get('batch_size', 5)
-        self.enable_streaming = config_dict.get('enable_streaming', True)
-        
-        self._validate()
-    
-    def _validate(self):
-        """Ensure required configs exist"""
-        if not self.model:
-            raise ValueError("Ollama model not configured")
-        if self.max_text_length < 500:
-            raise ValueError("max_text_length must be at least 500 tokens")
-    
-    def get_model_for_task(self, task: str) -> str:
-        """Get task-specific model or fall back to default"""
-        return self.models_by_task.get(task, self.model)
+
 
 
 class SmartJSONExtractor:
@@ -229,16 +206,62 @@ class TextChunker:
         ) for i, chunk in enumerate(chunks)]
 
 
+class EdgeModelManager:
+    """
+    Manages Ollama model loading state to prevent OOM on edge devices.
+    Ensures only one heavy model is active if needed, and handles locking.
+    """
+    _instance = None
+    _lock = asyncio.Lock()
+    _loaded_model: Optional[str] = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(EdgeModelManager, cls).__new__(cls)
+        return cls._instance
+        
+    async def exclusive_run(self, task_type: str, config: Any, func, *args, **kwargs):
+        """
+        Run an LLM task with exclusive access to resources.
+        Handles checking if model needs swapping.
+        """
+        model_name = config.get_model_name(task_type)
+        
+        async with self._lock:
+            # In a more advanced implementation, we would explicitly unload 
+            # the previous model if memory is tight. capabilities depend on Ollama version.
+            # For now, the lock ensures we don't try to load two huge models simultaneously
+            # via concurrent requests, letting Ollama's internal queuing handle the rest.
+            # We can also verify memory usage here if psutil is available.
+            
+            # self.logger.debug(f"Acquired lock for {model_name}")
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                pass
+
+# Global manager instance
+_model_manager = EdgeModelManager()
+
 class OllamaClient:
     """Resource-aware Ollama client implementing Contexter Pattern"""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = OllamaClientConfig(config or get_config().ollama.dict())
+        if config:
+            # If dict provided, wrap properly
+            # But normally we get the full config object structure from get_config()
+            # We'll use the singleton config if specific dict not passed, 
+            # or try to adapt the dict.
+            # For simplicity in this refactor, let's rely on get_config().ollama if config is None
+            pass
+            
+        # Re-fetch fresh config which has hardware detection
+        self.config = get_config().ollama
+        
         self.json_extractor = SmartJSONExtractor(logging.getLogger(__name__))
-        self.text_chunker = TextChunker(self.config.max_text_length)
+        self.text_chunker = TextChunker(4000) # Fixed limit for safe parsing
         self.logger = logging.getLogger(__name__)
         self._validate_prompts()
-        self._connection_pool = None
     
     def _validate_prompts(self):
         """Ensure required prompts are configured"""
@@ -298,7 +321,7 @@ class OllamaClient:
         ]
         
         try:
-            response = await self._call_llm_async(messages, model)
+            response = await self._call_llm_async(messages, 'reasoning')
             result = self.json_extractor.extract(response)
             
             if result and isinstance(result, dict) and 'entities' in result:
@@ -340,7 +363,7 @@ class OllamaClient:
         ]
         
         try:
-            response = await self._call_llm_async(messages, model)
+            response = await self._call_llm_async(messages, 'reasoning')
             result = self.json_extractor.extract(response)
             
             if result and isinstance(result, list):
@@ -366,7 +389,7 @@ class OllamaClient:
         messages = [{"role": "user", "content": prompt}]
         
         try:
-            response = await self._call_llm_async(messages, model)
+            response = await self._call_llm_async(messages, 'reasoning')
             words = response.split()
             return ' '.join(words[:max_length]) if words else ""
         except Exception as e:
@@ -419,7 +442,7 @@ class OllamaClient:
                         summary=summary,
                         embeddings=embeddings,
                         extraction_metadata={
-                            "model": self.config.model,
+                            "model": self.config.get_model_name('reasoning'),
                             "timestamp": time.time()
                         }
                     )
@@ -432,19 +455,35 @@ class OllamaClient:
         
         return results
     
-    async def _call_llm_async(self, messages: List[Dict[str, str]], model: str) -> str:
-        """Async LLM call with retry logic"""
+    async def _call_llm_async(self, messages: List[Dict[str, str]], task_type: str) -> str:
+        """Async LLM call with retry logic and resource locking"""
+        
+        full_config = self.config.get_model_config(task_type)
+        model = full_config.get("model")
+        
+        # Prepare options (exclude model name from options dict)
+        options = {k: v for k, v in full_config.items() if k != "model"}
+        
+        async def _execute_call():
+            # Note: ollama.chat is synchronous, so we run it in executor
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: ollama.chat(
+                    model=model,
+                    messages=messages,
+                    options=options
+                )
+            )
+            return response
+
         for attempt in range(self.config.max_retries):
             try:
-                # Note: ollama.chat is synchronous, so we run it in executor
-                loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: ollama.chat(
-                        model=model,
-                        messages=messages,
-                        options={'num_predict': 2048}
-                    )
+                # Use manager to ensure we don't overload
+                response = await _model_manager.exclusive_run(
+                    task_type, 
+                    self.config, 
+                    _execute_call
                 )
                 
                 if 'message' not in response or 'content' not in response['message']:

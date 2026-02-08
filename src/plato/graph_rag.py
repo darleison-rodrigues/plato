@@ -38,13 +38,13 @@ class GraphRAGPipeline:
         
         # Use embedding model from config
         Settings.embed_model = OllamaEmbedding(
-            model_name=self.config.ollama.models_by_task.get("embedding", "embeddinggemma"),
+            model_name=self.config.ollama.get_model_name("embedding"),
             base_url=self.config.ollama.base_url
         )
         
         # Use reasoning model for graph maintenance if needed, or extraction model
         Settings.llm = Ollama(
-            model=self.config.ollama.models_by_task.get("reasoning", "lfm2.5-thinking"), 
+            model=self.config.ollama.get_model_name("reasoning"), 
             base_url=self.config.ollama.base_url,
             request_timeout=self.config.ollama.timeout,
         )
@@ -137,7 +137,7 @@ class GraphRAGPipeline:
         
         # For querying, use the fast/chat model
         query_llm = Ollama(
-            model=self.config.ollama.models_by_task.get("fast_chat", "dolphin-phi"),
+            model=self.config.ollama.get_model_name("fast_chat"),
             base_url=self.config.ollama.base_url,
             request_timeout=self.config.ollama.timeout
         )

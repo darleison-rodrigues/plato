@@ -24,6 +24,7 @@ dependencies = [
     "pandas",
     "typer",
     "rich",
+    "psutil",
     "chromadb",
     "pypdf",  # Lightweight PDF support for LlamaIndex
     # LlamaIndex Core & Extensions
