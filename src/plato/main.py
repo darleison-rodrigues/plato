@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Platograph - Local-first Context Preparation Assistant 🦫
+plato - Local-first Context Preparation Assistant 🦫
 """
 import sys
 import asyncio
@@ -13,6 +13,25 @@ from rich.prompt import Prompt
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.table import Table
 from rich.text import Text
+
+try:
+    # Try importing from the package (when installed or run via python -m)
+    from plato.graph_rag import GraphRAGPipeline
+    from plato.parser import DocumentParser
+    from plato.config import get_config
+except ImportError as e:
+    # Try adding src to path if running directly
+    current_dir = Path(__file__).resolve().parent
+    src_dir = current_dir.parent
+    if str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+    try:
+        from plato.graph_rag import GraphRAGPipeline
+        from plato.parser import DocumentParser
+        from plato.config import get_config
+    except ImportError as e2:
+        print(f"Critical Error: Failed to import Platograph modules: {e2}")
+        sys.exit(1)
 
 # Initialize Rich Console
 console = Console()

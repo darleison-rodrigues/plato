@@ -9,7 +9,8 @@ from llama_index.core import (
     StorageContext,
     load_index_from_storage,
 )
-from llama_index.core.graph_stores.simple import SimplePropertyGraphStore
+from llama_index.core.graph_stores import SimplePropertyGraphStore, SimpleGraphStore
+
 from llama_index.core.vector_stores.simple import SimpleVectorStore
 from llama_index.llms.ollama import Ollama
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -37,7 +38,7 @@ class GraphRAGPipeline:
         
         # Use embedding model from config
         Settings.embed_model = HuggingFaceEmbedding(
-            model_name=self.config.ollama.models_by_task.get("embedding", "embedding-gemma")
+            model_name=self.config.ollama.models_by_task.get("embedding", "embeddinggemma")
         )
         
         # Use reasoning model for graph maintenance if needed, or extraction model

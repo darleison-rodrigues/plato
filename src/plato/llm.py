@@ -378,7 +378,7 @@ class OllamaClient:
         if not text:
             return []
         try:
-            embedding_model = self.config.models_by_task.get('embedding', 'embedding-gemma')
+            embedding_model = self.config.models_by_task.get('embedding', 'embeddinggemma')
             response = ollama.embeddings(model=embedding_model, prompt=text)
             return response.get('embedding', [])
         except Exception as e:

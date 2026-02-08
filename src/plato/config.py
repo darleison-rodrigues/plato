@@ -18,7 +18,7 @@ class OllamaConfig(BaseModel):
         "reasoning": "lfm2.5-thinking",        # For complex analysis
         "coding": "qwen2.5-coder",             # For structured data extraction / JSON
         "vision": "moondream",                 # For general image analysis
-        "embedding": "embedding-gemma",        # For vector embeddings
+        "embedding": "embeddinggemma",        # For vector embeddings
         "fast_chat": "dolphin-phi",            # For quick responses
         "minimal": "smollm2"                   # For very low resource environments
     })
@@ -52,9 +52,9 @@ class KnowledgeGraphConfig(BaseModel):
     max_visualization_nodes: int = Field(default=100, ge=10, le=1000)
 
 class Config(BaseModel):
-    ollama: OllamaConfig
-    pipeline: PipelineConfig
-    knowledge_graph: KnowledgeGraphConfig
+    ollama: OllamaConfig = Field(default_factory=OllamaConfig)
+    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    knowledge_graph: KnowledgeGraphConfig = Field(default_factory=KnowledgeGraphConfig)
     prompts: Dict[str, str] = Field(default_factory=dict)
     environment: str = Field(default="development")
 
@@ -110,6 +110,7 @@ class ConfigManager:
         paths = [
             Path(config_path),
             Path(__file__).parent / config_path,
+            Path(__file__).parents[2] / config_path, # Project root
             Path("context") / config_path,
             Path.cwd() / "config.yaml"
         ]

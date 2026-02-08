@@ -59,7 +59,7 @@ Ensure you have [Ollama](https://ollama.com) installed and running.
 Pull the default models that Platograph uses. You can change these later in `config.yaml`.
 
 ```bash
-ollama pull embedding-gemma
+ollama pull embeddinggemma
 ollama pull qwen2.5-coder
 ollama pull dolphin-phi
 ```
