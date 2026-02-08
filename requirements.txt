@@ -1,0 +1,9 @@
+docling
+networkx
+pydantic
+pyyaml
+ollama
+chromadb
+matplotlib
+spacy
+pandas

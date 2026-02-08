@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "contexter"
+version = "0.1.0"
+authors = [
+  { name="Darleison Filho" },
+]
+description = "Local-first PDF to Knowledge Graph & Semantic Search Pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "docling",
+    "networkx",
+    "pydantic",
+    "pyyaml",
+    "ollama",
+    "chromadb",
+    "matplotlib",
+    "spacy",
+    "pandas",
+]
+
+[project.scripts]
+contexter = "main:main"

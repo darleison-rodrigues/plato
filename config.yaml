@@ -1,0 +1,77 @@
+# Configuration for PDF-to-KG Pipeline
+
+# Ollama Settings
+# -----------------------------------------------------------------------------
+ollama:
+  # Base URL for local Ollama server
+  base_url: "http://localhost:11434"
+  
+  # The model used for extraction and search context analysis.
+  model: "llama3.2:3b"  
+  
+  # Timeout in seconds for LLM calls. Complex extraction may need more time.
+  timeout: 120
+
+# Chroma Vector Store Settings
+# -----------------------------------------------------------------------------
+chroma:
+  persist_directory: "./chroma_db"
+  collection_name: "pdf_documents"
+  
+  # Model used to generate embeddings for semantic search.
+  embedding_model: "nomic-embed-text"
+
+# Pipeline Settings
+# -----------------------------------------------------------------------------
+pipeline:
+  # Directory where all outputs (markdown, graph, entities) are saved.
+  output_dir: "output"
+  
+  # Text chunking settings for RAG.
+  # Small chunks (300-500) are better for specific facts.
+  # Large chunks (1000+) are better for general context.
+  chunk_size: 1000  
+  chunk_overlap: 200
+  
+  # Max chunks to retrieve when searching for context.
+  max_chunks_for_context: 5  
+
+# Knowledge Graph Settings
+# -----------------------------------------------------------------------------
+knowledge_graph:
+  # Max nodes to display in the PNG visualization to maintain readability.
+  max_visualization_nodes: 50
+  enable_visualization: true
+  
+# LLM Prompts
+# -----------------------------------------------------------------------------
+# Customize these prompts to extract domain-specific information.
+prompts:
+  # Extract entities from text in JSON format.
+  entity_extraction: |
+    Extract all named entities from the following text. Return ONLY a JSON object with this exact structure:
+    {
+      "entities": {
+        "PERSON": ["name1", "name2"],
+        "ORG": ["org1", "org2"],
+        "GPE": ["location1", "location2"],
+        "DATE": ["date1"],
+        "CONCEPT": ["concept1", "concept2"]
+      }
+    }
+    
+    Text: {text}
+    
+    JSON:
+
+  # Extract relationships between entities.
+  relation_extraction: |
+    Extract relationships between entities from the following text. Return ONLY a JSON array:
+    [
+      {{"subject": "Entity1", "relation": "verb/relationship", "object": "Entity2"}},
+      {{"subject": "Entity3", "relation": "verb/relationship", "object": "Entity4"}}
+    ]
+    
+    Text: {text}
+    
+    JSON:
