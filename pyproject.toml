@@ -15,22 +15,17 @@ description = "Local-first PDF to Knowledge Graph & Semantic Search Pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "networkx",
+    "textual>=0.50.0",
+    "pymupdf>=1.23.0",
+    "chromadb>=0.4.0",
+    "ollama>=0.1.0",
     "pydantic>=2.0",
-    "pyyaml",
-    "ollama",
-    "matplotlib",
-    "spacy",
-    "pandas",
-    "typer",
-    "rich",
-    "psutil",
-    "chromadb",
-    "pypdf",  # Lightweight PDF support for LlamaIndex
-    # LlamaIndex Core & Extensions
-    "llama-index-core",
-    "llama-index-llms-ollama",
-    "llama-index-embeddings-ollama",
+    "pyyaml>=6.0",
+    "psutil>=5.9.0",
+    "rich>=13.0",
+    "numpy>=1.24.0",
+    "python-dateutil>=2.8.2",
+    # Optional: DeepSeek-OCR integration helper if available, or just use generic request
 ]
 
 [project.scripts]

@@ -1,140 +1,176 @@
 # Plato Project Backlog
 
-## 🟢 Epic: TUI & UX Overhaul
-**Status**: In Progress
+## 🔴 Epic: Critical Fixes & Standardization
+**Status**: To Do
 **Priority**: Critical
+**Description**: Addressing the critical architectural and configuration issues identified in the technical review.
 
-### [TUI-01] Implement Robust Startup & Setup Flow
-**Description**: The current application crashes if Ollama is not running. We need a "pre-flight" check system.
+### [CRIT-01] Standardize Model Naming & Configuration
+**Description**: Fix inconsistent model references across documentation and code.
 **Implementation Details**:
-- Create `plato/setup.py` with `check_system()` function.
-- Check 1: `ollama` process is running (via HTTP ping).
-- Check 2: Hardware profile detection (verify `config.active_profile`).
-- Check 3: Storage directory permissions.
-- In `main.py`, run this check on startup. If failed, encourage `plato setup` or show helpful error.
-- Add `plato setup` command to download missing models (`ollama pull`) based on the active profile.
+- Create `src/plato/core/models.yaml` as the source of truth.
+- Update `config.py` to load standard models:
+    - `embeddinggemma:latest` (Embeddings)
+    - `deepseek-ocr:3b` (OCR)
+    - `lfm2.5-thinking:1.2b` (Reasoning - Eco/Balanced)
+    - `qwen2.5-coder:3b` (Reasoning - Performance)
+- Validate `ollama pull` commands in `README.md`.
 
-### [TUI-02] Enhanced `process` Command with Granular Control
-**Description**: Users need more control over what to process, not just "the whole directory".
+### [CRIT-02] Recalculate & Enforce RAM Budgets
+**Description**: Fix flawed RAM budget math. M1/8GB needs a 1.5B model to avoid OOM.
 **Implementation Details**:
-- Update `main.py`: `process(paths: List[Path], ...)`
-- Add `--dry-run`: Show what would happen (file list, sizes) without processing.
-- Add `--model`: Allow overriding the reasoning model for this run.
-- Add `--skip-existing`: Check if `doc_id` exists in storage before processing.
-- Implementation: iterate provided paths, expand globs, filter by existence if requested, then run `pipeline.process_pdf_async`.
+- Update `HardwareProfile` in `src/plato/utils/hardware.py`:
+    - **M1 (Performance)**: Switch LLM to `qwen2.5-coder:1.5b` (~1.2GB) or `deepseek-coder:1.3b` to stay within 3GB budget.
+    - **Allocations**: OS(2.5GB) + Browser/IDE(2.5GB) + PLATO(3.0GB) = 8GB.
+    - **Within PLATO**: LLM(1.2GB) + Embedder(0.2GB) + Vector(0.6GB) + App(0.3GB) + Buffer(0.7GB) = 3.0GB.
+- Implement strict sequential execution: unload embedder before loading LLM.
 
-### [TUI-03] Knowledge Graph Visualization & Export
-**Description**: Users cannot see the graph they built. We need export capabilities.
+### [CRIT-03] Vector DB Strategy & Benchmarking
+**Description**: Chroma vs FAISS decision needs empirical backing.
 **Implementation Details**:
-- **Visualization**:
-    - Implement `visualize.py` with `GraphVisualizer` (Mermaid/GraphViz generators).
-    - Add `plato visualize --format mermaid|graphviz|json` command.
-    - Output interactive HTML for Mermaid.
-- **Export**:
-    - Add `plato export --format markdown|json` command.
-    - Markdown export should include specific sections: Summary, Entities (by type), Relations, and an embedded Mermaid diagram.
-    - JSON export should dump the raw node/edge list.
+- Create benchmark script `tests/benchmark_db.py`.
+- Compare insert/query latency and RAM usage for 10k chunks.
+- Update `src/plato/storage/vector_db.py` to support user-configurable backend.
+- **Decision**: Default to ChromaDB for stability, make FAISS opt-in.
 
-### [TUI-04] Configuration Management CLI
-**Description**: Users currently have to edit python code to change settings.
+### [CRIT-04] Realistic Performance Targets
+**Description**: Existing targets are guesses. We need ranges based on complexity.
 **Implementation Details**:
-- Add `plato config` command group.
-- `plato config show`: Print current config (hardware profile, models, directories) using `rich.console`.
-- `plato config set <key> <value>`: Update `config.yaml` (need to implement persistent config saving in `ConfigManager`).
-- `plato config models`: List available Ollama models `ollama.list()` and highlight current selections.
-
-### [TUI-05] Enhanced Chat with History & Citations
-**Description**: Chat is currently stateless and doesn't cite sources.
-**Implementation Details**:
-- Implement `ChatSession` class to manually manage list of messages.
-- Update `plato chat`:
-    - Loop input/output.
-    - Append user query and system response to history.
-    - If `GraphRAG` returns source nodes, formatting them as citations: `[DocName, p.3]`.
-    - Allow `/reset` command to clear history.
+- Update `desc.md` (or new `specs.md`) with revised targets from IDEA.md.
+- Add `plato benchmark` command to run standard tests and report against these targets.
 
 ---
 
-## 🟡 Epic: Graph Quality & Intelligence
+## 🟡 Epic: Security & Robustness
 **Status**: To Do
 **Priority**: High
 
-### [KG-01] Entity Resolution & Deduplication
-**Description**: The graph currently contains duplicates (e.g., "AI" vs "Artificial Intelligence").
+### [SEC-01] Sandbox Template Execution
+**Description**: Prevent Jinja2 injection attacks.
 **Implementation Details**:
-- Create `class EntityResolver` in `graph_rag.py`.
-- **Normalization**: Lowercase, strip punctuation/symbols.
-- **Alias Tracking**: Dict mapping `normalized_alias -> canonical_name`.
-- **Insertion**: Modify `insert_triplets` to pass all entities through `resolver.resolve(entity)`.
-- **Storage**: Persist the alias map to `storage/aliases.json` so resolution is consistent across runs.
+- In `src/plato/core/template.py`:
+    - Switch to `jinja2.sandbox.SandboxedEnvironment`.
+    - Implement `safe_render()` function that only accepts whitelisted context variables (`context`, `user_query`, etc.).
 
-### [KG-02] Few-Shot Extraction Prompting
-**Description**: Extraction quality is variable.
+### [SEC-02] JSON Schema Validation
+**Description**: Templates claim to validate JSON but no schemas exist.
 **Implementation Details**:
-- Update `llm.py` extraction prompts.
-- Add `EXAMPLES` section to the system prompt.
-- Provide 2-3 high-quality examples of text -> JSON output.
-- Explicitly instruct on entity types (PERSON, ORG, CONCEPT) and relation constraints.
+- Create `src/plato/templates/schemas/`.
+- Add schemas for `security_audit`, `executive_summary`.
+- Add `jsonschema` dependency.
+- formatting: Update `TemplateEngine` to validate output against schema if defined in template.
 
-### [KG-03] Hallucination Check / Verification
-**Description**: GraphRAG can sometimes make up relations.
+### [ROB-01] Robust Hardware Detection
+**Description**: Current detection fails in VMs/Docker.
 **Implementation Details**:
-- (Optional/Later) Implement a "Verify" step where a second model call checks if the extracted relation is supported by the chunk text.
-- For now, maybe just lower `temperature` for extraction tasks (already set to 0.1/0.2 in edge profiles).
+- Update `src/plato/utils/hardware.py`.
+- Check for `/.dockerenv` or `/run/.containerenv`.
+- Default to `BALANCED` profile if virtualization detected.
+
+### [ROB-02] Memory Monitoring & Safety
+**Description**: 1GB buffer is too aggressive.
+**Implementation Details**:
+- Update `MemoryMonitor` in `src/plato/utils/memory.py`:
+    - Warning threshold: 1.5GB.
+    - Critical threshold: 0.5GB.
+- Add hook to `Pipeline` to pause/fail gracefully if critical threshold hit.
 
 ---
 
-## 🔵 Epic: GraphRAG Parity (Advanced Features)
-**Status**: Backlog
+## 🟠 Epic: Reliability & Error Recovery
+**Status**: To Do
+**Priority**: Critical
+**Description**: Addressing the missing error handling strategy to ensure the app doesn't crash on edge cases.
+
+### [ERR-01] Global Error Handling Strategy
+**Description**: Implement graceful degradation for common failure points.
+**Implementation Details**:
+- Create `plato/core/errors.py` with custom exceptions.
+- Wrap main TUI loop and processing pipeline in try/except.
+- Handle:
+    - Ollama disconnect/crash.
+    - Missing models (trigger auto-download or guide user).
+    - Corrupted PDFs (PyMuPDF exceptions).
+    - Disk full (IOError).
+- Output: Show non-blocking notifications in the TUI instead of crashing.
+
+### [CONC-01] Concurrency & Multi-Instance Safety
+**Description**: Handle multiple instances of PLATO and CPU/RAM contention.
+**Implementation Details**:
+- Implement file-based locking for ChromaDB and Cache directories.
+- Check if Ollama is already busy before starting generation.
+- Add `MAX_CONRSURRENT_PROCESSES` setting (default to 1 for Edge profiles).
+
+---
+
+## 🟡 Epic: Validation & Compliance
+**Status**: To Do
+**Priority**: High
+
+### [MOD-01] Model Availability Verification
+**Description**: Ensure models mentioned in spec actually exist in Ollama registry.
+**Implementation Details**:
+- Audit `models.yaml` against `ollama library`.
+- Change `deepseek-ocr:3b` to a verified tag if it's currently a placeholder.
+- Provide fallback paths for when primary models are unavailable.
+
+### [I18N-01] Internationalization & Script Support
+**Description**: Basic support for non-Latin scripts and RTL languages.
+**Implementation Details**:
+- Test with Chinese/Arabic/Japanese PDFs.
+- Ensure UTF-8 normalization for all text extraction and prompt injection.
+- Document limitations of 1.2B models for non-English reasoning.
+
+---
+
+## 🔵 Epic: Functional Enhancements
+**Status**: To Do
 **Priority**: Medium
 
-### [RAG-01] Hierarchical Summarization
-**Description**: Replicate Microsoft GraphRAG's ability to summarize at different levels.
+### [FUNC-01] Multi-Column PDF Chunking
+**Description**: Standard chunking fails on complex layouts.
 **Implementation Details**:
-- **Chunk Summary**: We already have this.
-- **Document Summary**: Aggregate chunk summaries -> LLM -> Document Summary.
-- **Global Summary**: Aggregate all Document summaries -> LLM -> Corpus Summary.
-- Store these in a way that `plato export` can include them.
+- In `src/plato/core/pdf.py`:
+    - Integrate `marker-pdf` (or heuristic detection) for multi-column files.
+    - Fallback to `pymupdf` for simple layouts.
+- Update `ingest_pdf` to route based on layout complexity.
 
-### [RAG-02] Hybrid Query Routing
-**Description**: Intelligent switching between local (fact) and global (theme) search.
+### [FUNC-02] Embedding Cache Invalidation
+**Description**: "Re-embed if changed" is too vague.
 **Implementation Details**:
-- Implement `Classifier` in `llm.py`: `classify_query(query) -> "specific" | "thematic"`.
-- If "specific": Use existing `GraphRAG` vector/keyword search.
-- If "thematic": Use Map-Reduce over Document Summaries.
-- Update `plato chat` to use this routing logic.
+- Implement `get_cache_key()` using:
+    - Content Hash (SHA256 of text).
+    - Chunking Config Version.
+    - Embedding Model Version.
+- Store embeddings in path derived from this key.
+
+### [FUNC-03] TUI Usability Fixes
+**Description**: Fix keyboard shortcuts and theming.
+**Implementation Details**:
+- Update `src/plato/tui/app.py`:
+    - Add `Ctrl+Shift+T` for theme toggle.
+    - Bind `Ctrl+S` with `F7` fallback for Save.
+    - Bind `Ctrl+Q` with `F10` fallback for Quit.
+- Add `RotatingFileHandler` for logs.
 
 ---
 
-## 🟣 Epic: Core Architecture & Fixes
-**Status**: Immediate
-**Priority**: Critical
+## ⚪ Epic: Future & Polish
+**Status**: Backlog
+**Priority**: Low
 
-### [CORE-01] Fix OllamaConfig Compatibility
-**Description**: `llm.py` and `graph_rag.py` are accessing deprecated `models_by_task` and `get_model_for_task`.
+### [FUT-01] Template Dry-Run
+**Description**: Preview prompt before execution.
 **Implementation Details**:
-- Refactor `src/plato/llm.py`:
-    - Replace `self.config.models_by_task.get(...)` with `self.config.get_model_name(...)`.
-    - Replace `get_model_for_task(...)` with `get_model_name(...)`.
-- Verify `src/plato/graph_rag.py` uses `get_model_name`.
-- Ensure all calls match the new `OllamaConfig` schema in `config.py`.
+- Add `--dry-run` flag to template command.
+- Render prompt and show token cost/time estimate.
 
-### [CORE-03] Core DX Improvements
-**Description**: Enhance developer experience based on critical feedback (lazy init, concurrency control, error handling).
+### [FUT-02] Template Marketplace Schema
+**Description**: Define schema for sharing templates.
 **Implementation Details**:
-- **Lazy Initialization**: Delay `OllamaClient` and `GraphRAG` loading in `Pipeline.__init__` until first use.
-- **Configurable Concurrency**: Allow `process` command to set `MAX_CONCURRENT_DOCS` (default 2 for edge).
-- **Documentation**: Add clear comments explaining async/executor offloading for CPU-bound tasks.
-- **Error Handling**: Catch specific exceptions (PDF parsing vs LLM vs Graph) for better user feedback.
+- Create `marketplace_schema.yaml`.
 
----
-
-## ⚪ Epic: Edge Optimization (Validation)
-**Status**: Done (Verification Pending)
-
-### [EDGE-01] Verify Memory Usage on M1
-**Description**: Ensure the new `EdgeModelManager` effectively prevents OOM.
+### [FUT-03] PDF Annotation Export
+**Description**: Highlight findings back into the PDF.
 **Implementation Details**:
-- Run `plato process` on a folder with 10+ PDFs.
-- Monitor RAM usage.
-- Confirm `model_manager` lock is working (logs should show sequential model access if conflicts occur).
+- Use `pymupdf` to draw highlights on coordinates of relevant chunks.
