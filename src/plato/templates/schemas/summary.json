@@ -1,0 +1,51 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Document Summary",
+    "type": "object",
+    "properties": {
+        "title": {
+            "type": "string"
+        },
+        "key_takeaways": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "minItems": 1
+        },
+        "entities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "type": {
+                        "type": "string"
+                    },
+                    "relevance": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "name",
+                    "type"
+                ]
+            }
+        },
+        "sentiment": {
+            "type": "string",
+            "enum": [
+                "positive",
+                "neutral",
+                "negative",
+                "mixed"
+            ]
+        }
+    },
+    "required": [
+        "title",
+        "key_takeaways"
+    ]
+}

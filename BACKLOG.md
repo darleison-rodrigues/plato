@@ -5,16 +5,20 @@
 **Priority**: Critical
 **Description**: Addressing the critical architectural and configuration issues identified in the technical review.
 
-### [CRIT-01] Standardize Model Naming & Configuration
-**Description**: Fix inconsistent model references across documentation and code.
+### [CRIT-01] Production-Grade Ollama Client (Refactor)
+**Description**: Refactor `OllamaClient` based on the 3.5/10 audit to fix performance and reliability gaps.
 **Implementation Details**:
-- Create `src/plato/core/models.yaml` as the source of truth.
-- Update `config.py` to load standard models:
-    - `embeddinggemma:latest` (Embeddings)
-    - `deepseek-ocr:3b` (OCR)
-    - `lfm2.5-thinking:1.2b` (Reasoning - Eco/Balanced)
-    - `qwen2.5-coder:3b` (Reasoning - Performance)
-- Validate `ollama pull` commands in `README.md`.
+- **Connection Pooling**: Use a persistent `httpx.AsyncClient` with `async with` context management.
+- **Streaming**: Implement `generate_stream` for real-time TUI updates.
+- **Batching**: Add `embeddings_batch` (6-10x speedup).
+- **Hardening**:
+    - Validated `GenerationOptions` dataclass.
+    - Specific `OllamaError` types and response validation.
+    - Exponential backoff retry logic (using `tenacity`).
+- **Lifecycle Mgmt**:
+    - Add `list_models`, `pull_model`, and `ps`.
+    - Support `keep_alive` management.
+- **Observability**: Add logging and `GenerationMetrics`.
 
 ### [CRIT-02] Recalculate & Enforce RAM Budgets
 **Description**: Fix flawed RAM budget math. M1/8GB needs a 1.5B model to avoid OOM.
@@ -25,13 +29,21 @@
     - **Within PLATO**: LLM(1.2GB) + Embedder(0.2GB) + Vector(0.6GB) + App(0.3GB) + Buffer(0.7GB) = 3.0GB.
 - Implement strict sequential execution: unload embedder before loading LLM.
 
-### [CRIT-03] Vector DB Strategy & Benchmarking
-**Description**: Chroma vs FAISS decision needs empirical backing.
+### [CRIT-03] Production-Grade Vector Storage (Refactor Retriever)
+**Description**: Refactor `HybridRetriever` into a robust `VectorRetriever` based on the 3/10 audit.
 **Implementation Details**:
-- Create benchmark script `tests/benchmark_db.py`.
-- Compare insert/query latency and RAM usage for 10k chunks.
-- Update `src/plato/storage/vector_db.py` to support user-configurable backend.
-- **Decision**: Default to ChromaDB for stability, make FAISS opt-in.
+- **Name**: Rename class to `VectorRetriever`.
+- **Embeddings**: Integrate `chromadb.utils.embedding_functions.OllamaEmbeddingFunction` using `embeddinggemma`.
+- **Efficiency**: Implement `index_batch` (10x speedup).
+- **Hardening**:
+    - Idempotent `index_document` (upsert behavior).
+    - Specific error handling (ChromaDB vs Connection vs Disk).
+    - Metadata validation (using `ChunkMetadata`).
+- **Functionality**:
+    - Add `delete_pdf` and `clear_collection`.
+    - Typed `SearchResult` objects.
+    - Metadata filtering in `query()`.
+- **Versioning**: Add `COLLECTION_VERSION` suffix to collection names.
 
 ### [CRIT-04] Realistic Performance Targets
 **Description**: Existing targets are guesses. We need ranges based on complexity.

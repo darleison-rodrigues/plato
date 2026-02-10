@@ -1,0 +1,35 @@
+# PLATO Model Configuration
+# This is the source of truth for all models used in the application.
+
+embeddings:
+  default: "embeddinggemma:latest"
+  dim: 768
+  provider: "ollama"
+
+vision:
+  default: "deepseek-ocr:3b"
+  provider: "ollama"
+
+reasoning:
+  eco:
+    name: "lfm2.5-thinking:1.2b"
+    ram_limit_gb: 1.5
+    provider: "ollama"
+  balanced:
+    name: "qwen2.5-coder:1.5b"
+    ram_limit_gb: 3.0
+    provider: "ollama"
+  performance:
+    name: "qwen2.5-coder:3b"
+    ram_limit_gb: 6.0
+    provider: "ollama"
+
+profiles:
+  m1_8gb:
+    embedding: "embeddinggemma:latest"
+    ocr: "deepseek-ocr:3b"
+    reasoning: "lfm2.5-thinking:1.2b" # Eco profile to ensure stability
+  performance:
+    embedding: "embeddinggemma:latest"
+    ocr: "deepseek-ocr:3b"
+    reasoning: "qwen2.5-coder:3b"

@@ -25,6 +25,8 @@ dependencies = [
     "rich>=13.0",
     "numpy>=1.24.0",
     "python-dateutil>=2.8.2",
+    "jsonschema>=4.0.0",
+    "tenacity>=8.0.0",
     # Optional: DeepSeek-OCR integration helper if available, or just use generic request
 ]
 

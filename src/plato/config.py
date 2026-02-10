@@ -11,145 +11,68 @@ logger = logging.getLogger(__name__)
 import platform
 import psutil
 
-# Hardware Profiles
-EDGE_MODELS_M1 = {
-    "reasoning": {
-        "model": "lfm2.5-thinking:latest",       # 1.5B, ~1GB
-        "num_ctx": 4096,
-        "temperature": 0.2,
-        "keep_alive": "15m"
-    },
-    
-    "coding": {
-        "model": "qwen2.5-coder:3b",             # 3B, ~2GB
-        "num_ctx": 8192,
-        "temperature": 0.1,
-        "keep_alive": "15m"
-    },
-    
-    "ocr": {
-        "model": "deepseek-ocr:latest",          # 1.3B, ~900MB
-        "num_ctx": 2048,
-        "temperature": 0.0,
-        "keep_alive": "10m"
-    },
-    
-    "embedding": {
-        "model": "nomic-embed-text",             # 137M, ~270MB
-        "dimensions": 768
-    },
-    
-    "fast_chat": {
-        "model": "dolphin-phi:latest",           # 2.7B, ~1.6GB
-        "num_ctx": 4096,
-        "temperature": 0.7,
-        "keep_alive": "10m"
-    },
-    "minimal": {"model": "smollm2:135m"}
-}
+# Load models.yaml as the source of truth for model naming
+MODELS_YAML_PATH = Path(__file__).parent / "core" / "models.yaml"
 
-EDGE_MODELS_I3 = {
-    "reasoning": {
-        "model": "lfm2.5-thinking:latest",       # 1.5B, ~1GB
-        "num_ctx": 2048,                         # Reduced context
-        "temperature": 0.2,
-        "num_thread": 4,                         # Prevent CPU saturation
-        "keep_alive": "10m"
-    },
-    
-    "coding": {
-        "model": "qwen2.5-coder:1.5b",           # 1.5B, ~1GB (not 3b!)
-        "num_ctx": 4096,
-        "temperature": 0.1,
-        "num_thread": 4,
-        "keep_alive": "10m"
-    },
-    
-    "ocr": {
-        "model": "deepseek-ocr:latest",          # 1.3B, ~900MB
-        "num_ctx": 2048,
-        "temperature": 0.0,
-        "num_thread": 4,
-        "keep_alive": "5m"
-    },
-    
-    "embedding": {
-        "model": "nomic-embed-text",             # 137M, ~270MB
-        "dimensions": 384                        # Reduced dimensions
-    },
-    
-    "fast_chat": {
-        "model": "smollm2:1.7b",                 # 1.7B, ~1GB (faster than dolphin-phi)
-        "num_ctx": 2048,
-        "temperature": 0.7,
-        "num_thread": 4,
-        "keep_alive": "5m"
-    },
-    "minimal": {"model": "smollm2:135m"}
-}
+def load_models_config() -> Dict[str, Any]:
+    """Loads standardized model definitions from YAML."""
+    if MODELS_YAML_PATH.exists():
+        with open(MODELS_YAML_PATH, 'r') as f:
+            return yaml.safe_load(f)
+    logger.warning(f"models.yaml not found at {MODELS_YAML_PATH}. Using fallback defaults.")
+    return {}
 
 def detect_hardware_profile() -> str:
-    """Auto-detect and return appropriate config key"""
+    """Auto-detect and return appropriate hardware profile."""
     try:
         ram_gb = psutil.virtual_memory().total / (1024**3)
         cpu = platform.processor() or ""
         
         # Mac M1/M2/M3 detection
         if platform.system() == "Darwin" and ("Apple" in cpu or platform.machine() == 'arm64'):
-            if ram_gb >= 7: # Allow for some OS overhead, 8GB usually shows as ~8
-                return "m1_8gb"
-            else:
-                return "m1_low"  # Fallback
+            # On M1/8GB, we must be conservative to avoid swap death
+            return "m1_8gb"
                 
-        # Intel/AMD
-        elif ram_gb >= 7:
-            return "i3_8gb"
-        else:
-            return "low_resource"
+        # Intel/AMD or high-RAM Macs
+        if ram_gb >= 15:
+            return "performance"
+        return "balanced"
     except Exception as e:
-        logging.warning(f"Hardware detection failed: {e}. Defaulting to safe/low profile.")
-        return "low_resource"
+        logger.warning(f"Hardware detection failed: {e}. Defaulting to 'balanced' profile.")
+        return "balanced"
 
 class OllamaConfig(BaseModel):
-    # Default high-performance model for general chat
-    chat_model: str = Field(default="lfm2.5-thinking") 
-    
-    # Configuration dict for active profile
+    """
+    Configuration for Ollama interacting, driven by hardware profiles.
+    """
+    base_url: str = Field(default_factory=lambda: os.getenv('OLLAMA_HOST', "http://localhost:11434"))
     active_profile: str = Field(default_factory=detect_hardware_profile)
     
-    # Task-specific configurations (holds full config dicts, not just names)
-    models_config: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-
-    base_url: str = Field(default_factory=lambda: os.getenv('OLLAMA_HOST', "http://localhost:11434"))
+    # Model selections based on profile
+    embedding_model: str = Field(default="embeddinggemma:latest")
+    ocr_model: str = Field(default="deepseek-ocr:3b")
+    reasoning_model: str = Field(default="qwen2.5-coder:1.5b")
+    
     timeout: int = Field(default=120, ge=30)
     max_retries: int = Field(default=3, ge=1, le=5)
 
-    @field_validator('base_url')
-    def validate_base_url(cls, v):
-        if not v.startswith(('http://', 'https://')):
-            raise ValueError('base_url must start with http:// or https://')
-        return v.rstrip('/')
-
     def __init__(self, **data):
         super().__init__(**data)
-        # Populate models based on detected profile if not manually overridden
-        if not self.models_config:
-            profile = self.active_profile
-            # Default to i3/safe if low resource, upgrade to M1 if detected
-            if profile == "m1_8gb":
-                self.models_config = EDGE_MODELS_M1
-            else:
-                self.models_config = EDGE_MODELS_I3 
-    
-    def get_model_config(self, task: str) -> Dict[str, Any]:
-        """Get full configuration for a task"""
-        # Fallback to defaults or minimal if task missing
-        return self.models_config.get(task, self.models_config.get("minimal", {}))
+        # Load from models.yaml to override defaults
+        m_cfg = load_models_config()
+        if m_cfg and "profiles" in m_cfg:
+            profile_data = m_cfg["profiles"].get(self.active_profile, m_cfg["profiles"].get("balanced", {}))
+            if profile_data:
+                self.embedding_model = profile_data.get("embedding", self.embedding_model)
+                self.ocr_model = profile_data.get("ocr", self.ocr_model)
+                self.reasoning_model = profile_data.get("reasoning", self.reasoning_model)
+                logger.info(f"Loaded models for profile '{self.active_profile}': {self.reasoning_model}, {self.ocr_model}")
 
     def get_model_name(self, task: str) -> str:
-        """Get just the model name for a task"""
-        cfg = self.get_model_config(task)
-        return cfg.get("model", self.chat_model)
+        """Helper to get standardized model name for a task."""
+        if task == "embedding": return self.embedding_model
+        if task == "ocr": return self.ocr_model
+        return self.reasoning_model
 
 class PipelineConfig(BaseModel):
     chunk_size: int = Field(default=512, ge=100, le=4096)

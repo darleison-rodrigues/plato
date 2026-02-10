@@ -44,8 +44,11 @@ class TemplateEngine:
         """
         Renders a template with the provided context safely.
         """
-        template = self.env.get_template(template_name)
-        return template.render(**context)
+        try:
+            template = self.env.get_template(template_name)
+            return template.render(**context)
+        except Exception as e:
+            raise TemplateRenderError(f"Failed to render template {template_name}: {e}")
 
     def validate_json(self, content: str, schema_name: str) -> Dict[str, Any]:
         """
@@ -62,10 +65,15 @@ class TemplateEngine:
                 
             jsonschema.validate(instance=data, schema=schema)
             return data
+        except FileNotFoundError:
+            raise
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse JSON: {e}")
         except jsonschema.ValidationError as e:
             raise ValueError(f"JSON validation failed: {e.message}")
+        except Exception as e:
+            # Keep generic catch for unexpected logic errors but log them
+            raise TemplateRenderError(f"Unexpected error during JSON validation: {e}")
 
     def list_templates(self) -> List[str]:
         """
