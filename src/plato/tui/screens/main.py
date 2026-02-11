@@ -58,22 +58,16 @@ class MainScreen(Screen):
             config = get_config()
             # UI preparation
             empty.display = False
-            results.display = True
-            results.update_content("Starting analysis...")
-            
-            print("DEBUG: Pipeline started")
             # 1. Extract Text
             status.set_status(f"Extracting text...", "cyan")
             processor = PDFProcessor(self.selected_pdf)
             full_text, is_scanned = processor.analyze_content()
-            print(f"DEBUG: Text extracted, length={len(full_text)}")
             
             if is_scanned:
                 results.update_content("Error: Document appears to be scanned (no selectable text).")
                 return
 
             # 2. Setup Clients
-            print("DEBUG: Setting up Ollama client")
             from plato.ollama.client import OllamaEmbeddingFunction
             async with OllamaClient(base_url=config.ollama.base_url) as ollama:
                 # Use our hardened embedding function for vector operations
@@ -81,10 +75,8 @@ class MainScreen(Screen):
                     model=config.ollama.embedding_model, 
                     base_url=config.ollama.base_url
                 )
-                print(f"DEBUG: embedding_fn type: {type(embedding_fn)}")
                 
                 status.set_status("Indexing chunks...", "cyan")
-                print("DEBUG: initializing retriever")
                 retriever = VectorRetriever(
                     persist_dir=config.pipeline.output_dir,
                     embedding_fn=embedding_fn
@@ -93,13 +85,11 @@ class MainScreen(Screen):
                 # Index the document if not already indexed
                 pdf_hash = f"pdf_{self.selected_pdf.name}" # Placeholder hash
                 doc_id = f"{pdf_hash}_full"
-                print(f"DEBUG: Indexing document {doc_id}")
                 # Run heavy/blocking indexing in a separate thread to keep UI responsive
                 await asyncio.to_thread(retriever.index_document, doc_id, full_text, {"filename": self.selected_pdf.name})
 
                 # 3. Retrieve Context
                 status.set_status("Retrieving context...", "cyan")
-                print("DEBUG: Retrieving context")
                 # Querying with the action objective or just taking top chunks
                 query_text = f"Objective: {self.selected_action.stem}"
                 # Run heavy/blocking query in a separate thread
@@ -108,14 +98,12 @@ class MainScreen(Screen):
 
                 # 4. Render Template
                 status.set_status("Preparing prompt...", "cyan")
-                print("DEBUG: Rendering template")
                 engine = TemplateEngine(template_dir=str(self.selected_action.parent))
                 rendered_prompt = await asyncio.to_thread(engine.render, self.selected_action.name, {"context": context})
 
                 # 5. Stream Generation
                 status.set_status("PLATO is thinking...", "magenta")
                 results.update_content("") # Clear for streaming
-                print("DEBUG: Starting stream generation")
                 
                 accumulated = ""
                 async for chunk in ollama.generate_stream(
@@ -124,7 +112,6 @@ class MainScreen(Screen):
                 ):
                     accumulated += chunk
                     results.update_content(accumulated)
-                print("DEBUG: Stream finished")
             
             status.set_status("Done.", "green")
             

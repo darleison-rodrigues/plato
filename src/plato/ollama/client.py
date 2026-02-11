@@ -48,9 +48,9 @@ class OllamaClient:
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
-        timeout_generate: float = 120.0,
-        timeout_embed: float = 30.0,
-        timeout_connect: float = 5.0,
+        timeout_generate: float = 300.0,  # Increased to 5 minutes
+        timeout_embed: float = 300.0,     # Increased to 5 minutes
+        timeout_connect: float = 10.0,
         max_concurrent: int = 3
     ):
         self.base_url = base_url
@@ -64,11 +64,11 @@ class OllamaClient:
         """Helper to create a configured HTTP client."""
         return httpx.AsyncClient(
             base_url=self.base_url,
-            timeout=httpx.Timeout(self.timeout_generate, connect=self.timeout_connect),
+            timeout=httpx.Timeout(self.timeout_generate, connect=self.timeout_connect, read=self.timeout_generate, write=self.timeout_generate, pool=self.timeout_connect),
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
             headers={"Content-Type": "application/json"}
         )
-
+    
     async def __aenter__(self):
         """Standard usage via async context manager."""
         if not self._client:
@@ -116,7 +116,14 @@ class OllamaClient:
             "options": options or {}
         }
         
-        timeout = httpx.Timeout(connect=self.timeout_connect, read=None, write=5.0, pool=5.0)
+        # Explicitly set all timeout parameters to avoid httpx error
+        timeout = httpx.Timeout(
+            self.timeout_generate, 
+            connect=self.timeout_connect, 
+            read=self.timeout_generate, 
+            write=5.0, 
+            pool=5.0
+        )
         
         if not self._client:
             raise RuntimeError("OllamaClient must be used as an async context manager (async with).")
@@ -171,7 +178,7 @@ class OllamaClient:
     async def embeddings(self, model: str, prompt: str) -> List[float]:
         """Generate embedding for a single text."""
         payload = {"model": model, "prompt": prompt}
-        timeout = httpx.Timeout(connect=self.timeout_connect, read=self.timeout_embed)
+        timeout = httpx.Timeout(self.timeout_embed, connect=self.timeout_connect, read=self.timeout_embed, write=5.0, pool=5.0)
         
         async with self._semaphore:
             try:
@@ -255,28 +262,37 @@ class OllamaEmbeddingFunction:
     """
     Adapter for ChromaDB to use our OllamaClient.
     """
-    def __init__(self, model: str, base_url: str = "http://localhost:11434"):
+    def __init__(self, model: str, base_url: str = "http://localhost:11434", timeout: float = 300.0):
         self.model = model
         self.base_url = base_url
+        self.timeout = timeout
 
     def __call__(self, input: List[str]) -> List[List[float]]:
         """Synchronous wrapper for ChromaDB compatibility."""
         async def _get_embeddings():
-            async with OllamaClient(base_url=self.base_url) as client:
+            async with OllamaClient(base_url=self.base_url, timeout_embed=self.timeout) as client:
                 return await client.embeddings_batch(self.model, input)
         
         try:
             # If we are already in an async loop, we can't use run_until_complete
             # or asyncio.run. We need a different approach for true async usage.
             # However, for ChromaDB's local indexing, it's often called from sync code.
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
                 # In a TUI (running loop), we should ideally call embedding indexing asynchronously.
                 # If we MUST do it sync, we use a thread.
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     return executor.submit(lambda: asyncio.run(_get_embeddings())).result()
-            return loop.run_until_complete(_get_embeddings())
+            
+            # No running loop (CLI case), so we can use asyncio.run
+            return asyncio.run(_get_embeddings())
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             logger.error(f"OllamaEmbeddingFunction failed: {e}")
-            raise OllamaError(f"Embedding generation failed: {e}")
+            raise OllamaError(f"Embedding generation failed: {repr(e)}")

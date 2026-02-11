@@ -35,6 +35,8 @@ PLATO features a rich Textual User Interface (TUI) designed for speed:
 - **Live Stream**: Watch the reasoning process in real-time with Markdown support.
 - **Hardware Monitor**: Real-time RAM tracking vs your hardware budget.
 
+![App Screenshot](proof.png)
+
 ## 🚀 Quick Start
 
 ### 1. Prerequisites

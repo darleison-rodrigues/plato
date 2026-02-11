@@ -121,23 +121,18 @@ class VectorRetriever:
         if not self.embedding_fn:
              raise VectorStorageError("Embedding function not configured.")
 
-        print(f"DEBUG: Inside query. Calling embedding_fn on '{text}'")
         embeddings = self.embedding_fn([text])
-        print(f"DEBUG: embedding_fn returned {type(embeddings)}")
         try:
             query_vec = np.array(embeddings[0], dtype=np.float32)
-            print("DEBUG: query_vec created")
         except Exception as e:
-            print(f"DEBUG: Error creating query_vec: {e}")
+            logger.error(f"Error creating query vector: {e}")
             raise
 
-        print("DEBUG: Acquiring lock...")
         with self._lock:
-            print("DEBUG: Lock acquired")
             # Simple cosine similarity: (A . B) / (||A|| * ||B||)
             # Normalize vectors for fast cosine via dot product
             if self._vectors is None:
-                 print("DEBUG: _vectors is None")
+                 return []
             
             # Manual norm calculation to avoid potential BLAS deadlocks on M1/Textual
             # norms = np.linalg.norm(self._vectors, axis=1, keepdims=True)

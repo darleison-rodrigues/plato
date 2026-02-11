@@ -4,6 +4,7 @@ from jinja2 import FileSystemLoader, select_autoescape
 from jinja2.sandbox import SandboxedEnvironment
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from plato.core.errors import TemplateRenderError
 
 class TemplateEngine:
     """
