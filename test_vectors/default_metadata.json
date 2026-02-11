@@ -1,0 +1,1 @@
+{"ids": ["doc1", "doc2"], "metadata": [{"pdf_hash": "hash_12345678", "page": 1, "chunk_index": 0, "content": "This is doc 1"}, {"pdf_hash": "hash_12345678", "page": 1, "chunk_index": 1, "content": "This is document two"}]}

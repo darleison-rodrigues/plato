@@ -17,9 +17,1612 @@ https://ollama.com/library/smollm2
 # hardware constraint
 mac air m1
 ram 8gb ram
-
+## focus
+focus on usability performance , and privecy and local processing. 
 
 # llama index examples
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# LlamaParse Agent\n",
+    "\n",
+    "This demo walks through using an OpenAI Agent with [LlamaParse](https://cloud.llamaindex.ai).\n",
+    "\n",
+    "Status:\n",
+    "| Last Executed | Version | State      |\n",
+    "|---------------|---------|------------|\n",
+    "| Aug-19-2025   | 0.6.61  | Maintained |"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "> **⚠️ DEPRECATION NOTICE**>> This example uses the deprecated `llama-cloud-services` package, which will be maintained until **May 1, 2026**.>> **Please migrate to:**> - **Python**: `pip install llama-cloud>=1.0` ([GitHub](https://github.com/run-llama/llama-cloud-py))> - **New Package Documentation**: https://docs.cloud.llamaindex.ai/>> The new package provides the same functionality with improved performance and support."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Setup"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "!pip install llama-cloud-services \"llama-index>=0.13.0<0.14.0\""
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import os\n",
+    "\n",
+    "os.environ[\"LLAMA_CLOUD_API_KEY\"] = \"llx-...\"\n",
+    "os.environ[\"OPENAI_API_KEY\"] = \"sk-...\""
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from llama_index.core import Settings\n",
+    "from llama_index.embeddings.openai import OpenAIEmbedding\n",
+    "from llama_index.llms.openai import OpenAI\n",
+    "\n",
+    "Settings.embed_model = OpenAIEmbedding(model=\"text-embedding-3-small\")\n",
+    "Settings.llm = OpenAI(model=\"gpt-5-mini\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Parsing \n",
+    "\n",
+    "For parsing, lets use a [recent paper](https://huggingface.co/papers/2403.09611) on Multi-Modal pretraining"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "!wget https://arxiv.org/pdf/2403.09611.pdf -O paper.pdf"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Below, we can tell the parser to skip content we don't want. In this case, the references section will just add noise to a RAG system."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from llama_cloud_services import LlamaParse\n",
+    "from sympy import O\n",
+    "\n",
+    "parser = LlamaParse(\n",
+    "    parse_mode=\"parse_page_with_agent\",\n",
+    "    model=\"openai-gpt-4-1-mini\",\n",
+    "    high_res_ocr=True,\n",
+    "    adaptive_long_table=True,\n",
+    "    outlined_table_extraction=True,\n",
+    "    output_tables_as_HTML=True,\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Started parsing the file under job_id cd1958b0-b260-4a63-aa74-bf829a0c125f\n",
+      ".."
+     ]
+    }
+   ],
+   "source": [
+    "result = await parser.aparse(\"paper.pdf\")\n",
+    "documents = result.get_markdown_documents(split_by_page=False)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from llama_index.core.node_parser import SentenceSplitter\n",
+    "\n",
+    "# Chain splitters to ensure chunk size requirements are met\n",
+    "nodes = SentenceSplitter(chunk_size=2048, chunk_overlap=256).get_nodes_from_documents(\n",
+    "    documents\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Chat over the paper, lets find out what it is about!"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from llama_index.core import VectorStoreIndex, SummaryIndex\n",
+    "\n",
+    "vector_index = VectorStoreIndex(nodes=nodes)\n",
+    "summary_index = SummaryIndex(nodes=nodes)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from llama_index.core.agent import FunctionAgent\n",
+    "from llama_index.core.tools import QueryEngineTool\n",
+    "\n",
+    "tools = [\n",
+    "    QueryEngineTool.from_defaults(\n",
+    "        vector_index.as_query_engine(\n",
+    "            similarity_top_k=4,\n",
+    "        ),\n",
+    "        name=\"query\",\n",
+    "        description=\"Send a query that requires only a subset of the top-k documents to be considered\",\n",
+    "    ),\n",
+    "    QueryEngineTool.from_defaults(\n",
+    "        summary_index.as_query_engine(),\n",
+    "        name=\"query_all_docs\",\n",
+    "        description=\"Send a query that requires all documents to be considered\",\n",
+    "    ),\n",
+    "]\n",
+    "\n",
+    "agent = FunctionAgent(\n",
+    "    tools=tools,\n",
+    "    llm=Settings.llm,\n",
+    "    system_prompt=\"You are a helpful assistant that can answer questions about the paper.\",\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from llama_index.core.workflow import Context\n",
+    "\n",
+    "# Context to persist the agent session\n",
+    "ctx = Context(agent)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Calling tool query_all_docs with args {'input': 'Provide the summary of the paper (concise abstract-like summary).'}\n",
+      "Tool call query_all_docs({'input': 'Provide the summary of the paper (concise abstract-like summary).'}) returned This paper presents a practical recipe and empirical analysis for building high-performing multimodal large language models (MLLMs). Through systematic ablations of image encoders, vision–language connectors, and pre-training data mixtures, the work identifies key design lessons: image resolution and the number of image tokens drive the largest gains, followed by encoder capacity and pre-training data; architectural choices for the vision–language connector matter far less. Data-wise, a careful mixture of captioned images, interleaved image–text documents, and some text-only data is critical — caption data boosts zero-shot captioning, interleaved documents enable strong few-shot and text performance, and text-only data preserves language capabilities. The authors apply these lessons to scale MM1: ViT-H image encoders at high resolution feeding 144 visual tokens into decoder-only LLMs (dense and MoE variants) trained on a 45/45/10 mixture (interleaved/caption/text), for ~200k steps (~400B tokens). MM1 models (dense up to 30B, MoE up to effectively tens of billions of parameters) achieve state-of-the-art few-shot pre-training metrics and competitive supervised fine-tuning results across many established multimodal benchmarks, while exhibiting enhanced in-context learning, multi-image reasoning, and few-shot chain-of-thought capabilities. Practical training details (learning-rate scaling, unfreezing the encoder during SFT, high-resolution support via positional interpolation and sub-image decomposition) and the positive impact of synthetic caption data are reported to guide reproducing and extending these findings.\n",
+      "\n",
+      "================\n",
+      "\n",
+      "Here is a concise, abstract‑style summary of the paper:\n",
+      "\n",
+      "- Goal: provide a practical recipe and empirical analysis for building high‑performing multimodal LLMs (MLLMs) and identify which design choices matter most.\n",
+      "- Key findings: image resolution and number of image tokens yield the largest performance gains, followed by vision‑encoder capacity and pretraining data; the specific architecture of the vision–language connector matters far less.\n",
+      "- Data mix: a careful pretraining mixture is critical—captioned images boost zero‑shot captioning, interleaved image–text documents enable strong few‑shot and text performance, and some text‑only data preserves language capabilities. The authors use a 45/45/10 split (interleaved/caption/text).\n",
+      "- MM1 models: applying these lessons, they scale ViT‑H encoders at high resolution producing 144 visual tokens into decoder‑only LLMs (dense up to 30B, MoE variants effectively larger), trained ~200k steps (~400B tokens).\n",
+      "- Results: MM1 achieves state‑of‑the‑art few‑shot pretraining metrics and competitive supervised fine‑tuning across many multimodal benchmarks, with improved in‑context learning, multi‑image reasoning, and few‑shot chain‑of‑thought behavior.\n",
+      "- Practical guidance: reportable tricks include learning‑rate scaling, unfreezing the encoder during SFT, supporting high resolution via positional interpolation and sub‑image decomposition, and the positive impact of synthetic caption data.\n",
+      "\n",
+      "Overall, the paper offers both empirical insights about what drives MLLM performance and a concrete, reproducible recipe (MM1) that attains strong multimodal capabilities.\n"
+     ]
+    }
+   ],
+   "source": [
+    "from llama_index.core.agent import ToolCall, ToolCallResult\n",
+    "\n",
+    "handler = agent.run(\n",
+    "    \"What is the summary of the paper that you have access to?\", ctx=ctx\n",
+    ")\n",
+    "async for ev in handler.stream_events():\n",
+    "    if isinstance(ev, ToolCall):\n",
+    "        print(f\"Calling tool {ev.tool_name} with args {ev.tool_kwargs}\")\n",
+    "    elif isinstance(ev, ToolCallResult):\n",
+    "        print(f\"Tool call {ev.tool_name}({ev.tool_kwargs}) returned {ev.tool_output}\")\n",
+    "\n",
+    "print(\"\\n================\\n\")\n",
+    "\n",
+    "resp = await handler\n",
+    "print(resp)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Calling tool query_all_docs with args {'input': 'Describe in detail how the authors evaluate their work: which benchmarks and tasks they use (pretraining metrics, few-shot evaluation, supervised fine-tuning, multimodal benchmarks, in-context learning, chain-of-thought, multi-image reasoning), the metrics reported, baselines compared, and ablation studies conducted. Include mentions of training steps, model sizes, and any special evaluation setups (e.g., positional interpolation, sub-image decomposition, synthetic caption data).'}\n",
+      "Tool call query_all_docs({'input': 'Describe in detail how the authors evaluate their work: which benchmarks and tasks they use (pretraining metrics, few-shot evaluation, supervised fine-tuning, multimodal benchmarks, in-context learning, chain-of-thought, multi-image reasoning), the metrics reported, baselines compared, and ablation studies conducted. Include mentions of training steps, model sizes, and any special evaluation setups (e.g., positional interpolation, sub-image decomposition, synthetic caption data).'}) returned Overview\n",
+      "- Evaluation covers both pre-training (zero-/few-shot) and supervised fine-tuning (SFT) regimes, plus targeted analyses of in-context learning, multi-image reasoning, and chain-of-thought prompting. Evaluations include captioning, VQA, a set of text-only tasks (TextCore), and a wide collection of modern multimodal benchmarks. Results are reported for multiple model scales (dense 3B, 7B, 30B and MoE variants) and compared to several published baselines.\n",
+      "\n",
+      "Pre-training evaluation\n",
+      "- Tasks and benchmarks:\n",
+      "  - Image captioning: COCO (Karpathy test), NoCaps (val), TextCaps (val). Captioning use standard caption prompts and reporting.\n",
+      "  - Visual question answering / text-in-image tasks: VQAv2 (testdev), TextVQA (val), VizWiz (testdev), GQA, OK-VQA (val).\n",
+      "  - A text-only evaluation suite called TextCore (ARC, PIQA, LAMBADA, WinoGrande, HellaSWAG, SciQ, TriviaQA, WebQS) to measure preservation/quality of language capabilities.\n",
+      "- Prompting and generation:\n",
+      "  - Captioning prompt: \"{IMAGE} A photo of\" (or equivalent). VQA prompt: \"{IMAGE} Question: {QUESTION} Short answer:\".\n",
+      "  - Greedy decoding until EOS or task-specific stop tokens. For captioning the newline is a stop token; for VQA additional stop tokens include \".\", \",\", \"Question\".\n",
+      "  - VQA postprocessing follows the same logic used by OpenFlamingo implementations.\n",
+      "- Metrics:\n",
+      "  - Captioning: CIDEr (computed via nlg-eval).\n",
+      "  - VQA and related QA tasks: task-appropriate accuracy metrics (reported as percentages).\n",
+      "  - TextCore: aggregated scores reported to indicate text-only capabilities.\n",
+      "  - Pre-training few-shot evaluation reported for 0-shot, 4-shot, and 8-shot settings (4- and 8-shot used as main few-shot points).\n",
+      "- Splits and sampling:\n",
+      "  - Few-shot prompts are sampled from training when available, otherwise validation, ensuring the query example is not one of the shots.\n",
+      "- Scale and settings for pre-training evaluation runs:\n",
+      "  - Most pre-training evaluations use smaller ablation setups: base ablation LLM = 1.2B (but some encoder ablations use a 2.9B LLM to ensure capacity).\n",
+      "  - Final pre-trained models evaluated at 3B, 7B, and 30B (dense) and MoE variants (3B backbone with 64 experts; 7B backbone with 32 experts).\n",
+      "- Baselines for pre-training comparisons:\n",
+      "  - Flamingo (various sizes), Emu2 (14B, 37B), IDEFICS (9B, 80B), and other published pre-trained MLLMs where few-shot pre-training numbers are available.\n",
+      "\n",
+      "Supervised fine-tuning (SFT) evaluation\n",
+      "- SFT data and setup:\n",
+      "  - SFT mixture contains ≈1.45M examples: GPT-4/GPT-4V-generated instruction-response data (e.g., LLaVA-Conv/Complex, ShareGPT-4V), many academic VL datasets (VQAv2, GQA, OKVQA, A-OKVQA, COCO Captions, OCRVQA, TextCaps, DVQA, ChartQA, AI2D, DocVQA, InfoVQA, SynthDog-En), and a small internal text-only SFT set.\n",
+      "  - Fine-tuning: 10k steps, batch size 256, sequence length 2048; optimizer AdaFactor with peak LR 1e-5 and cosine decay to 0. Both image encoder and LLM are unfrozen unless noted in ablations.\n",
+      "- Benchmarks & aggregated evaluation:\n",
+      "  - A large set of 12+ multimodal benchmarks is used for SFT evaluation, including VQAv2, TextVQA, ScienceQA-IMG, MMMU, MathVista, MME (perception/cognition splits), MMBench, SEED-Bench, POPE, LLaVA-Bench-in-the-Wild, MM-Vet, etc.\n",
+      "  - Results reported per-dataset and combined into a meta-average for comparisons; the meta-average is normalized relative to a compact baseline to make metrics comparable across tasks.\n",
+      "- Baselines and SFT comparisons:\n",
+      "  - Compared against a range of SOTA and contemporary multimodal models after instruction tuning: LLaVA variants (1.5/NeXT), InstructBLIP, Qwen-VL, Emu2-Chat, CogVLM, Gemini family, GPT4V where available, and others. Both dense and MoE variants are compared when available.\n",
+      "- High-resolution and multi-image SFT evaluation:\n",
+      "  - Two techniques are used to support high-resolution inputs during SFT:\n",
+      "    - Positional embedding interpolation to adapt ViT positional embeddings to larger resolutions (used to support 448×448, 560×560, 672×672, etc.).\n",
+      "    - Sub-image decomposition (crop-based): for very high resolution (e.g., 1344×1344) the image is split into multiple sub-images (e.g., five 672×672 crops) that are encoded independently and concatenated as a sequence to the LLM.\n",
+      "  - Default SFT evaluation results reported at an effective high resolution (1344×1344) via these strategies. Reported improvement with higher resolution (e.g., relative gains up to ~15% average when supporting 1344×1344 vs 336×336).\n",
+      "- Chain-of-thought & few-shot in-context evaluation after SFT:\n",
+      "  - MathVista is used to quantify few-shot chain-of-thought capability: example results show 0-shot 39.4, 4-shot 41.9, and an 8-shot mixed-resolution in-context setup achieves 44.4.\n",
+      "  - Mixed-resolution in-context strategy: to fit more examples in context while managing token cost of high-resolution sub-image decomposition, some in-context examples are encoded at lower resolution and only the last N examples use full high-resolution decomposition (N=3 in reported experiments).\n",
+      "\n",
+      "Ablation studies and analyses\n",
+      "- Overall ablation design:\n",
+      "  - A compact base configuration is used for systematic ablations: ViT-L/14 image encoder (CLIP), C-Abstractor connector with 144 image tokens, pre-training mixture 45% captioned images / 45% interleaved image-text / 10% text-only, and a 1.2B decoder-only LLM for many ablations.\n",
+      "  - One component changed at a time; evaluations are zero-/few-shot across the same captioning and VQA benchmarks.\n",
+      "- Image encoder ablations:\n",
+      "  - Compared contrastive (CLIP variants trained on DFN-5B, VeCap-300M, OpenAI CLIP) against reconstructive losses (AIM models).\n",
+      "  - Resolution ablations: 224 → 336 → 378 px; clear finding that image resolution has the largest impact, followed by encoder capacity and training data composition. Increasing resolution yielded ~3% absolute boost in many metrics.\n",
+      "  - Encoder size: ViT-L → ViT-H shows modest gains (typically <1% absolute).\n",
+      "  - Training data for encoders: inclusion of synthetic caption data (VeCap) yields non-trivial few-shot improvements.\n",
+      "  - Table-based reporting of 0-/4-/8-shot metrics for these variants.\n",
+      "- Vision-language (VL) connector ablations:\n",
+      "  - Connector types: average pooling (grid pooling + linear), attention pooling (learnable queries), and C-Abstractor (convolutional mapping / ResNet-based projector).\n",
+      "  - Image token counts: experiments with 64 vs 144 image tokens per image.\n",
+      "  - Findings: number of visual tokens and image resolution matter most; the particular connector architecture has comparatively little effect on final performance. Detailed 0/4/8-shot tables compare pooling strategies across token counts and resolutions.\n",
+      "- Pre-training data mixture ablations:\n",
+      "  - Systematically varied mixes of captioned image pairs vs interleaved image-text documents vs text-only data. Examples tested: 100% caption, mixtures such as 66/33, 50/50, and 0/100, and image/text-only ratios (e.g., 91/9, 86/14, 66/33).\n",
+      "  - Key lessons:\n",
+      "    - Interleaved documents are critical for few-shot and text-only performance; captioning data strongly lifts zero-shot captioning performance.\n",
+      "    - Text-only data helps preserve/boost few-shot and text-only performance; including ~9–14% text-only yields a better balance.\n",
+      "    - A final recommended pre-training mix is 45% interleaved / 45% image-caption / 10% text-only to balance zero- and few-shot capabilities.\n",
+      "  - Impact of synthetic VeCap captions: even though small (~7% of caption pool), VeCap gives measurable few-shot gains (e.g., 2.4% and 4% absolute in reported settings).\n",
+      "- SFT-specific ablations:\n",
+      "  - Repeating data-mixture and connector ablations in the SFT context: caption-pretraining helps SFT zero-shot metrics; choice of VL connector still has limited effect though finer differences appear at high token counts; freezing vs unfreezing the image encoder matters (frozen better at lower resolution; unfrozen better for high-resolution SFT).\n",
+      "- Hyperparameter and optimization ablations:\n",
+      "  - Learning-rate grid searches run at small scales (models 9M, 85M, 302M, 1.2B) and 50k-step probes, then a log-linear fit extrapolated to larger model sizes. Grid-search experiments used 50k training steps for each setting.\n",
+      "  - Resulting scaling rule and fitted formula for optimal peak learning rate as a function of LLM parameter count is provided and used to choose LRs for the 3B/7B/30B models (e.g., final LRs used: 6e-5 (3B), 4e-5 (7B), 2e-5 (30B)). Weight decay scaled as λ = 0.1 · η.\n",
+      "- MoE (mixture-of-experts) experiments:\n",
+      "  - Two MoE designs: 3B-MoE with 64 experts (∼64B total params, top-2 gating, replace every-2 layers) and 7B-MoE with 32 experts (∼47B total params, replace every-4 layers).\n",
+      "  - Training used top-2 gating, load-balance loss coefficient 0.01, router z-loss 0.001, and otherwise the same hyperparameters and data mixture as the dense backbones. MoE variants show uniform improvements over dense counterparts on many SFT benchmarks.\n",
+      "- Additional implementation/evaluation notes:\n",
+      "  - Pre-training: models trained unfrozen for 200k steps (≈400B tokens) with batch size 512 and sequence length 4096, allowing up to 16 images per sequence and 144 tokens per image (≈1M text tokens + 1M image tokens per batch in the final setup). The pre-training mixture is fixed deterministically for reproducibility.\n",
+      "  - Pre-training evaluation prompts, stop tokens, and postprocessing are standardized (greedy decoding), and detailed splits used for each benchmark are specified.\n",
+      "  - SFT evaluation meta-average: benchmarks are normalized to a compact baseline configuration prior to averaging so disparate metrics can be compared.\n",
+      "  - For high-resolution SFT, the positional interpolation approach (to support larger patches) and the sub-image decomposition scheme (to represent very large images as multiple crops) are both used and evaluated; sub-image decomposition increases the number of image tokens dramatically, which motivates mixed-resolution in-context examples for few-shot prompting.\n",
+      "\n",
+      "Reporting and comparisons\n",
+      "- Tabular reporting:\n",
+      "  - Pre-training few-shot results are reported in detailed tables per model scale (3B, 7B, 30B) for 0/4/8/16-shot where applicable, across captioning and VQA datasets.\n",
+      "  - SFT comparisons show per-benchmark numbers and a combined meta-average; both dense and MoE model variants are included.\n",
+      "- Baselines and contemporaries cited for direct comparison include Flamingo, IDEFICS, Emu2, LLaVA-NeXT, CogVLM, Gemini family, GPT4V, and many instruction-tuned MLLMs. Where appropriate, notes on differences in prompting setups (e.g., some baselines include text-only demonstrations in “0” prompts) are documented.\n",
+      "- Qualitative analysis:\n",
+      "  - A variety of qualitative examples shown for counting, OCR, multi-image reasoning, style following, instruction following, and chain-of-thought reasoning; these accompany quantitative results to illustrate capabilities such as multi-image reasoning and few-shot chain-of-thought.\n",
+      "\n",
+      "Key reported evaluation figures (examples)\n",
+      "- Pre-training duration: 200k steps (~400B tokens).\n",
+      "- Pre-training batch & context: batch 512, sequence length 4096, up to 16 images per sequence, 144 tokens per image.\n",
+      "- SFT: 10k steps; batch 256; seq length 2048; AdaFactor with peak LR 1e-5.\n",
+      "- MoE variants: 3B backbone + 64 experts (∼64B total); 7B backbone + 32 experts (∼47B total); top-2 gating; load-balance and router regularizers used.\n",
+      "- Example few-shot chain-of-thought: MathVista 0-shot 39.4 → 4-shot 41.9 → 8-shot with mixed-resolution 44.4.\n",
+      "\n",
+      "In summary\n",
+      "- Evaluation is multi-faceted: systematic pre-training zero-/few-shot tests on captioning and VQA, text-only TextCore checks, extensive SFT across a broad benchmark suite, ablations covering image encoder, VL connector, data mixtures, training hyperparameters, and input-resolution strategies, plus experiments with MoE scaling. Metrics include CIDEr for captioning, accuracy for VQA and other benchmarks, TextCore aggregated scores, and a normalized meta-average for SFT. The authors report results across multiple model sizes and variants and compare to a broad set of recent multimodal models.\n",
+      "\n",
+      "================\n",
+      "\n",
+      "Short answer: the authors evaluate across (1) pre-training zero-/few-shot benchmarks (captioning, VQA, and a text-only suite), (2) supervised instruction fine‑tuning (SFT) on a large multimodal mixture with extensive downstream benchmarks, and (3) targeted analyses (in‑context/few‑shot learning, chain‑of‑thought, multi‑image reasoning). They report standard task metrics (CIDEr for captioning, accuracy for VQA/QA, aggregated TextCore scores, and a normalized SFT meta‑average), compare to many recent MLLMs, and run systematic ablations (encoder, connector, data mixtures, hyperparameters, resolution/tokenization, MoE). Key training/eval settings and special setups are also evaluated (positional interpolation, sub‑image decomposition, synthetic caption data). Details:\n",
+      "\n",
+      "1) Pre‑training evaluation\n",
+      "- Tasks and datasets:\n",
+      "  - Image captioning: COCO (Karpathy test), NoCaps (val), TextCaps (val).\n",
+      "  - VQA/text‑in‑image: VQAv2 (testdev), TextVQA, VizWiz, GQA, OK‑VQA, etc.\n",
+      "  - TextCore: a text‑only suite (ARC, PIQA, LAMBADA, WinoGrande, HellaSWAG, SciQ, TriviaQA, WebQS) to check language preservation.\n",
+      "- Prompting & decoding:\n",
+      "  - Zero/4/8 (and sometimes 16) shot prompts; few‑shot examples sampled from train/val ensuring no leakage.\n",
+      "  - Greedy decoding with task‑specific stop tokens; VQA postprocessing matches Flamingo style.\n",
+      "- Metrics:\n",
+      "  - CIDEr for captioning, accuracy (%) for VQA/QA tasks, aggregated TextCore scores for language capability.\n",
+      "- Model scales for evaluation:\n",
+      "  - Ablations often use a small base LLM (1.2B, sometimes 2.9B). Final pre‑trained models evaluated at 3B, 7B, 30B (dense) and MoE variants.\n",
+      "- Baselines:\n",
+      "  - Compared against Flamingo, Emu2, IDEFICS, and other published pre‑trained MLLMs when few‑shot pretraining numbers are available.\n",
+      "\n",
+      "2) Supervised fine‑tuning (SFT) evaluation\n",
+      "- SFT data:\n",
+      "  - ≈1.45M instruction examples: GPT‑4/GPT‑4V synthetic instruction data (LLaVA‑Conv/Complex, ShareGPT‑4V), many academic VL datasets (VQAv2, GQA, OKVQA, COCO Captions, TextCaps, OCRVQA, ChartQA, DocVQA, etc.), and a small internal text SFT set.\n",
+      "- Fine‑tuning procedure:\n",
+      "  - 10k steps, batch 256, seq length 2048, AdaFactor optimizer, peak LR 1e‑5 with cosine decay. Image encoder and LLM unfrozen unless ablated.\n",
+      "- Downstream benchmarks and reporting:\n",
+      "  - 12+ multimodal benchmarks for SFT evaluation (VQAv2, TextVQA, ScienceQA‑IMG, MMMU, MathVista, MME, MMBench, SEED‑Bench, POPE, LLaVA‑BiW, MM‑Vet, etc.). Results reported per dataset and combined into a normalized meta‑average for fair aggregation across heterogeneous metrics.\n",
+      "- Baselines:\n",
+      "  - Compared to instruction‑tuned contemporaries: LLaVA/NeXT, InstructBLIP, Qwen‑VL, Emu2‑Chat, CogVLM, Gemini family, GPT4V where available.\n",
+      "\n",
+      "3) Targeted analyses (in‑context learning, CoT, multi‑image)\n",
+      "- In‑context/few‑shot: standard 0/4/8‑shot probes across captioning and VQA.\n",
+      "- Chain‑of‑thought: MathVista used to quantify few‑shot CoT; reported example: 0‑shot 39.4 → 4‑shot 41.9 → 8‑shot mixed‑resolution 44.4.\n",
+      "- Multi‑image reasoning: evaluated qualitatively and quantitatively on multi‑image benchmarks and examples.\n",
+      "\n",
+      "4) Ablation studies (systematic and extensive)\n",
+      "- Image encoder ablations:\n",
+      "  - Contrastive (CLIP variants) vs reconstructive (AIM); encoder size (ViT‑L → ViT‑H); encoder training data (including synthetic caption data VeCap).\n",
+      "  - Resolution ablations (e.g., 224 → 336 → 378 px): resolution and number of visual tokens give the largest gains.\n",
+      "- Vision–language connector ablations:\n",
+      "  - Connector types (avg‑pooling, attention pooling, C‑Abstractor) and visual token counts (e.g., 64 vs 144). Finding: connector architecture matters far less than token count/resolution.\n",
+      "- Pre‑training data mixture ablations:\n",
+      "  - Varied mixes of caption pairs / interleaved image–text documents / text‑only. Key finding: 45% interleaved / 45% caption / 10% text gives the best balance (interleaved documents help few‑shot/text performance; captions boost zero‑shot captioning; text-only preserves language capabilities).\n",
+      "  - Small synthetic caption pool (VeCap) provides measurable few‑shot gains.\n",
+      "- SFT ablations:\n",
+      "  - Freezing vs unfreezing image encoder in SFT (unfreeze better for high‑resolution), data‑mix effects in SFT, connector behavior at high token counts.\n",
+      "- Hyperparameter & optimizer ablations:\n",
+      "  - LR grid searches at small scales (9M → 1.2B) with 50k‑step probes and a fitted scaling rule; final LRs chosen (e.g., ~6e‑5 for 3B, 4e‑5 for 7B, 2e‑5 for 30B for pretraining). Weight decay scaled proportionally.\n",
+      "- MoE experiments:\n",
+      "  - Two MoE setups: 3B backbone + 64 experts (~64B params) and 7B + 32 experts (~47B params), top‑2 gating, load‑balance/reg losses; MoE variants yield uniform improvements on many SFT benchmarks.\n",
+      "\n",
+      "5) Special evaluation/training setups and numbers\n",
+      "- Pretraining infrastructure & settings:\n",
+      "  - Pretraining: ≈200k steps (~400B tokens), batch 512, seq length 4096, allow up to 16 images per sequence, 144 tokens per image in final setup. Pretraining mixture fixed deterministically.\n",
+      "- High‑resolution support:\n",
+      "  - Positional embedding interpolation to adapt ViT positional embeddings to larger resolutions.\n",
+      "  - Sub‑image decomposition (split very large images into multiple crops, encode independently, and concatenate visual tokens) to support extremely high effective resolution (e.g., 1344×1344 as five 672×672 crops).\n",
+      "  - Mixed‑resolution in‑context strategy to keep context capacity reasonable while enabling high‑resolution targets in the last few shots.\n",
+      "- Decoding/postprocessing:\n",
+      "  - Greedy decoding; task‑specific stops; standardized postprocessing to align with prior work.\n",
+      "- Reporting conventions:\n",
+      "  - 0/4/8‑shot pretraining tables, SFT per‑dataset numbers and a normalized meta‑average, and qualitative examples (counting, OCR, style following, multi‑image reasoning, CoT).\n",
+      "\n",
+      "6) Qualitative analysis\n",
+      "- Numerous qualitative examples illustrating multi‑image reasoning, counting, OCR, instruction following, and chain‑of‑thought behaviors accompany the quantitative results.\n",
+      "\n",
+      "In short: the evaluation is broad (pretraining few‑shot, SFT, targeted capability probes), quantitatively rigorous (CIDEr/accuracy/meta‑averages), compares to many contemporary MLLMs, and is supported by wide ablations (encoder, connector, data, optimization, resolution, MoE) and practical high‑resolution evaluation techniques (positional interpolation, sub‑image decomposition, mixed‑resolution in‑context).\n"
+     ]
+    }
+   ],
+   "source": [
+    "handler = agent.run(\"How do the authors evaluate their work?\", ctx=ctx)\n",
+    "async for ev in handler.stream_events():\n",
+    "    if isinstance(ev, ToolCall):\n",
+    "        print(f\"Calling tool {ev.tool_name} with args {ev.tool_kwargs}\")\n",
+    "    elif isinstance(ev, ToolCallResult):\n",
+    "        print(f\"Tool call {ev.tool_name}({ev.tool_kwargs}) returned {ev.tool_output}\")\n",
+    "\n",
+    "\n",
+    "print(\"\\n================\\n\")\n",
+    "\n",
+    "resp = await handler\n",
+    "print(resp)"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": ".venv",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 2
+}
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "cell-0",
+   "metadata": {},
+   "source": [
+    "# Batch Parse with LlamaCloud Directories\n",
+    "\n",
+    "This notebook demonstrates how to use LlamaCloud's batch processing API to parse multiple files in a directory. The workflow includes:\n",
+    "\n",
+    "1. **Creating a Directory** - Set up a directory to organize your files\n",
+    "2. **Uploading Files** - Upload multiple files to the directory\n",
+    "3. **Starting a Batch Parse Job** - Kick off batch processing on all files\n",
+    "4. **Monitoring Progress** - Check the status and view results\n",
+    "\n",
+    "This is useful when you need to parse many documents at once, as the batch API handles the orchestration and provides progress tracking."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "0c2b5e1a",
+   "metadata": {},
+   "source": [
+    "> **⚠️ DEPRECATION NOTICE**>> This example uses the deprecated `llama-cloud-services` package, which will be maintained until **May 1, 2026**.>> **Please migrate to:**> - **Python**: `pip install llama-cloud>=1.0` ([GitHub](https://github.com/run-llama/llama-cloud-py))> - **New Package Documentation**: https://docs.cloud.llamaindex.ai/>> The new package provides the same functionality with improved performance and support."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cell-1",
+   "metadata": {},
+   "source": [
+    "## Setup and Installation"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-2",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "%pip install llama-cloud python-dotenv"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-3",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import os\n",
+    "from dotenv import load_dotenv\n",
+    "import httpx\n",
+    "\n",
+    "# Load environment variables\n",
+    "load_dotenv()\n",
+    "\n",
+    "# Set your API key\n",
+    "LLAMA_CLOUD_API_KEY = os.environ.get(\"LLAMA_CLOUD_API_KEY\", \"llx-...\")\n",
+    "\n",
+    "# Optional: Set base URL (defaults to https://api.cloud.llamaindex.ai if not set)\n",
+    "LLAMA_CLOUD_BASE_URL = os.environ.get(\n",
+    "    \"LLAMA_CLOUD_BASE_URL\", \"https://api.cloud.llamaindex.ai\"\n",
+    ")\n",
+    "\n",
+    "# Optional: Set project_id if you have one, otherwise it will use your default project\n",
+    "PROJECT_ID = os.environ.get(\"LLAMA_CLOUD_PROJECT_ID\", None)\n",
+    "\n",
+    "print(\"✅ API key configured\")\n",
+    "print(f\"   Base URL: {LLAMA_CLOUD_BASE_URL}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cell-4",
+   "metadata": {},
+   "source": [
+    "## Setup HTTP Client\n",
+    "\n",
+    "Since the current version of the llama-cloud SDK has some issues with the beta endpoints, we'll use direct HTTP requests with httpx for reliability."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-5",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Create HTTP client with authentication\n",
+    "headers = {\n",
+    "    \"Authorization\": f\"Bearer {LLAMA_CLOUD_API_KEY}\",\n",
+    "}\n",
+    "\n",
+    "print(\"✅ HTTP client configured\")\n",
+    "print(f\"   Using base URL: {LLAMA_CLOUD_BASE_URL}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cell-6",
+   "metadata": {},
+   "source": [
+    "## Step 1: Create a Directory\n",
+    "\n",
+    "First, we'll create a directory to organize our files. Directories help you group related files together for batch processing."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-7",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from datetime import datetime\n",
+    "\n",
+    "# Create a directory with a timestamp in the name\n",
+    "timestamp = datetime.now().strftime(\"%Y%m%d-%H%M%S\")\n",
+    "directory_name = f\"batch-parse-demo-{timestamp}\"\n",
+    "\n",
+    "# Create directory using HTTP request\n",
+    "response = httpx.post(\n",
+    "    f\"{LLAMA_CLOUD_BASE_URL}/api/v1/beta/directories\",\n",
+    "    headers=headers,\n",
+    "    params={\"project_id\": PROJECT_ID},\n",
+    "    json={\n",
+    "        \"name\": directory_name,\n",
+    "        \"description\": \"Demo directory for batch parse example\",\n",
+    "    },\n",
+    "    timeout=60.0,\n",
+    ")\n",
+    "\n",
+    "if response.status_code in [200, 201]:\n",
+    "    directory = response.json()\n",
+    "    directory_id = directory[\"id\"]\n",
+    "    project_id = directory[\"project_id\"]\n",
+    "\n",
+    "    print(f\"✅ Created directory: {directory['name']}\")\n",
+    "    print(f\"   Directory ID: {directory_id}\")\n",
+    "    print(f\"   Project ID: {project_id}\")\n",
+    "else:\n",
+    "    raise Exception(\n",
+    "        f\"Failed to create directory: {response.status_code} - {response.text}\"\n",
+    "    )"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cell-8",
+   "metadata": {},
+   "source": [
+    "## Step 2: Upload Files to the Directory\n",
+    "\n",
+    "Now we'll upload some files to our directory. For this demo, we'll download some sample PDFs and upload them.\n",
+    "\n",
+    "You can replace these with your own files."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-9",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Create a directory for sample files\n",
+    "import requests\n",
+    "\n",
+    "os.makedirs(\"sample_files\", exist_ok=True)\n",
+    "\n",
+    "# Sample documents to download\n",
+    "sample_docs = {\n",
+    "    \"attention.pdf\": \"https://arxiv.org/pdf/1706.03762.pdf\",\n",
+    "    \"bert.pdf\": \"https://arxiv.org/pdf/1810.04805.pdf\",\n",
+    "}\n",
+    "\n",
+    "# Download sample documents\n",
+    "for filename, url in sample_docs.items():\n",
+    "    filepath = f\"sample_files/{filename}\"\n",
+    "    if not os.path.exists(filepath):\n",
+    "        print(f\"📥 Downloading {filename}...\")\n",
+    "        response = requests.get(url)\n",
+    "        if response.status_code == 200:\n",
+    "            with open(filepath, \"wb\") as f:\n",
+    "                f.write(response.content)\n",
+    "            print(f\"   ✅ Downloaded {filename}\")\n",
+    "        else:\n",
+    "            print(f\"   ❌ Failed to download {filename}\")\n",
+    "    else:\n",
+    "        print(f\"📁 {filename} already exists\")\n",
+    "\n",
+    "print(\"\\n✅ Sample files ready!\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cell-10",
+   "metadata": {},
+   "source": [
+    "### Upload Files to Directory\n",
+    "\n",
+    "Now let's upload the files to our directory using the `upload_file_to_directory` endpoint."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-11",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "uploaded_files = []\n",
+    "\n",
+    "# Workaround: Use direct HTTP requests instead of SDK due to SDK bug\n",
+    "import httpx\n",
+    "\n",
+    "for filename in os.listdir(\"sample_files\"):\n",
+    "    if filename.endswith(\".pdf\"):\n",
+    "        filepath = f\"sample_files/{filename}\"\n",
+    "\n",
+    "        print(f\"📤 Uploading {filename}...\")\n",
+    "\n",
+    "        # Upload file using direct HTTP request (SDK has a bug with file uploads)\n",
+    "        with open(filepath, \"rb\") as f:\n",
+    "            # Prepare the multipart form data correctly\n",
+    "            files = {\"upload_file\": (filename, f, \"application/pdf\")}\n",
+    "\n",
+    "            # Make the request directly\n",
+    "            response = httpx.post(\n",
+    "                f\"{LLAMA_CLOUD_BASE_URL}/api/v1/beta/directories/{directory_id}/files/upload\",\n",
+    "                params={\"project_id\": project_id},\n",
+    "                files=files,\n",
+    "                headers={\"Authorization\": f\"Bearer {LLAMA_CLOUD_API_KEY}\"},\n",
+    "                timeout=60.0,\n",
+    "            )\n",
+    "\n",
+    "            if response.status_code in [200, 201]:\n",
+    "                directory_file = response.json()\n",
+    "                uploaded_files.append(directory_file)\n",
+    "                print(f\"   ✅ Uploaded: {directory_file.get('display_name')}\")\n",
+    "                print(f\"      File ID: {directory_file.get('id')}\")\n",
+    "            else:\n",
+    "                print(f\"   ❌ Upload failed: {response.status_code}\")\n",
+    "                print(f\"      Error: {response.text[:200]}\")\n",
+    "\n",
+    "print(f\"\\n✅ Uploaded {len(uploaded_files)} files to directory\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cell-12",
+   "metadata": {},
+   "source": [
+    "## Step 3: Create a Batch Parse Job\n",
+    "\n",
+    "Now that we have files in our directory, let's create a batch parse job to process them all at once.\n",
+    "\n",
+    "The batch processing API uses the same configuration as LlamaParse."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-13",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Configure the parse job\n",
+    "# This configuration will apply to all files in the directory\n",
+    "job_config = {\n",
+    "    \"job_name\": \"parse_raw_file_job\",  # Must match the JobNames enum value\n",
+    "    \"partitions\": {},\n",
+    "    \"parameters\": {\n",
+    "        \"type\": \"parse\",\n",
+    "        \"lang\": \"en\",\n",
+    "        \"fast_mode\": True,\n",
+    "    },\n",
+    "}\n",
+    "\n",
+    "print(\"✅ Job configuration created\")\n",
+    "print(f\"   Language: {job_config['parameters']['lang']}\")\n",
+    "print(f\"   Fast mode: {job_config['parameters']['fast_mode']}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cell-14",
+   "metadata": {},
+   "source": [
+    "### Submit the Batch Job\n",
+    "\n",
+    "Now let's submit the batch job to process all files in the directory."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-15",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(f\"🚀 Submitting batch parse job for directory: {directory_id}\")\n",
+    "print(f\"   Processing {len(uploaded_files)} files...\\n\")\n",
+    "\n",
+    "# Submit batch job using HTTP request\n",
+    "response = httpx.post(\n",
+    "    f\"{LLAMA_CLOUD_BASE_URL}/api/v1/beta/batch-processing\",\n",
+    "    headers=headers,\n",
+    "    params={\"project_id\": project_id},\n",
+    "    json={\n",
+    "        \"directory_id\": directory_id,\n",
+    "        \"job_config\": job_config,\n",
+    "        \"page_size\": 100,  # Number of files to fetch per batch\n",
+    "        \"continue_as_new_threshold\": 10,  # Workflow continuation threshold\n",
+    "    },\n",
+    "    timeout=60.0,\n",
+    ")\n",
+    "\n",
+    "if response.status_code in [200, 201]:\n",
+    "    batch_job = response.json()\n",
+    "    batch_job_id = batch_job[\"id\"]\n",
+    "\n",
+    "    print(\"✅ Batch job submitted successfully!\")\n",
+    "    print(f\"   Batch Job ID: {batch_job_id}\")\n",
+    "    print(f\"   Workflow ID: {batch_job.get('workflow_id')}\")\n",
+    "    print(f\"   Status: {batch_job.get('status')}\")\n",
+    "    print(f\"   Total Items: {batch_job.get('total_items')}\")\n",
+    "else:\n",
+    "    raise Exception(\n",
+    "        f\"Failed to create batch job: {response.status_code} - {response.text}\"\n",
+    "    )"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cell-16",
+   "metadata": {},
+   "source": [
+    "## Step 4: Monitor Job Progress\n",
+    "\n",
+    "Now let's monitor the batch job progress. We'll poll the status endpoint to see how the job is progressing."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-17",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import time\n",
+    "\n",
+    "\n",
+    "def print_job_status(status_data):\n",
+    "    \"\"\"Helper function to print job status in a readable format.\"\"\"\n",
+    "    job = status_data[\"job\"]\n",
+    "    progress_pct = status_data[\"progress_percentage\"]\n",
+    "\n",
+    "    print(f\"\\n{'='*60}\")\n",
+    "    print(f\"Job Status: {job['status']}\")\n",
+    "    print(f\"{'='*60}\")\n",
+    "    print(f\"Total Items: {job['total_items']}\")\n",
+    "    print(f\"Completed: {job['processed_items']}\")\n",
+    "    print(f\"Failed: {job['failed_items']}\")\n",
+    "    print(f\"Skipped: {job['skipped_items']}\")\n",
+    "    print(f\"Progress: {progress_pct:.1f}%\")\n",
+    "\n",
+    "    if job.get(\"completed_at\"):\n",
+    "        print(f\"Completed At: {job['completed_at']}\")\n",
+    "    elif job.get(\"started_at\"):\n",
+    "        print(f\"Started At: {job['started_at']}\")\n",
+    "\n",
+    "    print(f\"{'='*60}\")\n",
+    "\n",
+    "\n",
+    "# Poll for status updates\n",
+    "print(\"🔄 Monitoring batch job progress...\")\n",
+    "print(\n",
+    "    \"Note: It may take a few seconds for the workflow to initialize and count files.\\n\"\n",
+    ")\n",
+    "\n",
+    "max_polls = 60  # Maximum number of status checks (increased for longer jobs)\n",
+    "poll_interval = 10  # Seconds between checks\n",
+    "\n",
+    "for i in range(max_polls):\n",
+    "    response = httpx.get(\n",
+    "        f\"{LLAMA_CLOUD_BASE_URL}/api/v1/beta/batch-processing/{batch_job_id}\",\n",
+    "        headers=headers,\n",
+    "        params={\"project_id\": project_id},\n",
+    "        timeout=60.0,\n",
+    "    )\n",
+    "\n",
+    "    if response.status_code == 200:\n",
+    "        status_data = response.json()\n",
+    "        print_job_status(status_data)\n",
+    "\n",
+    "        # Check if job is complete\n",
+    "        job_status = status_data[\"job\"][\"status\"]\n",
+    "        if job_status in [\"completed\", \"failed\", \"cancelled\"]:\n",
+    "            print(f\"\\n✅ Job finished with status: {job_status}\")\n",
+    "            break\n",
+    "\n",
+    "        if i < max_polls - 1:\n",
+    "            print(f\"\\n⏳ Waiting {poll_interval} seconds before next check...\")\n",
+    "            time.sleep(poll_interval)\n",
+    "    else:\n",
+    "        print(f\"Error getting status: {response.status_code} - {response.text}\")\n",
+    "        break\n",
+    "else:\n",
+    "    print(f\"\\n⚠️  Reached maximum polling attempts. Job may still be running.\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cell-18",
+   "metadata": {},
+   "source": [
+    "## Step 5: View Job Items\n",
+    "\n",
+    "Let's look at the individual items in the batch job to see which files were processed successfully."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-19",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Get all items in the batch job\n",
+    "response = httpx.get(\n",
+    "    f\"{LLAMA_CLOUD_BASE_URL}/api/v1/beta/batch-processing/{batch_job_id}/items\",\n",
+    "    headers=headers,\n",
+    "    params={\"project_id\": project_id, \"limit\": 100},\n",
+    "    timeout=60.0,\n",
+    ")\n",
+    "\n",
+    "if response.status_code == 200:\n",
+    "    items_response = response.json()\n",
+    "\n",
+    "    print(f\"\\n📋 Batch Job Items ({items_response['total_size']} total)\")\n",
+    "    print(f\"{'='*80}\\n\")\n",
+    "\n",
+    "    for item in items_response[\"items\"]:\n",
+    "        status_emoji = (\n",
+    "            \"✅\"\n",
+    "            if item[\"status\"] == \"completed\"\n",
+    "            else \"❌\"\n",
+    "            if item[\"status\"] == \"failed\"\n",
+    "            else \"⏳\"\n",
+    "        )\n",
+    "        print(f\"{status_emoji} {item['item_name']}\")\n",
+    "        print(f\"   Status: {item['status']}\")\n",
+    "        print(f\"   Item ID: {item['item_id']}\")\n",
+    "\n",
+    "        if item.get(\"error_message\"):\n",
+    "            print(f\"   Error: {item['error_message']}\")\n",
+    "\n",
+    "        print()\n",
+    "else:\n",
+    "    print(f\"Error listing items: {response.status_code} - {response.text}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cell-20",
+   "metadata": {},
+   "source": [
+    "## Step 6: Retrieve Processing Results\n",
+    "\n",
+    "For each completed file, we can retrieve the processing results to see where the parsed output is stored."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-21",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Get processing results for a specific item\n",
+    "if items_response[\"items\"]:\n",
+    "    first_item = items_response[\"items\"][0]\n",
+    "\n",
+    "    print(f\"\\n🔍 Processing results for: {first_item['item_name']}\")\n",
+    "    print(f\"{'='*80}\\n\")\n",
+    "\n",
+    "    response = httpx.get(\n",
+    "        f\"{LLAMA_CLOUD_BASE_URL}/api/v1/beta/batch-processing/items/{first_item['item_id']}/processing-results\",\n",
+    "        headers=headers,\n",
+    "        params={\"project_id\": project_id},\n",
+    "        timeout=60.0,\n",
+    "    )\n",
+    "\n",
+    "    if response.status_code == 200:\n",
+    "        results = response.json()\n",
+    "\n",
+    "        print(f\"Item: {results['item_name']}\")\n",
+    "        print(f\"Total processing runs: {len(results['processing_results'])}\\n\")\n",
+    "\n",
+    "        for i, result in enumerate(results[\"processing_results\"], 1):\n",
+    "            print(f\"Run {i}:\")\n",
+    "            print(f\"  Job Type: {result['job_type']}\")\n",
+    "            print(f\"  Processed At: {result['processed_at']}\")\n",
+    "            print(f\"  Parameters Hash: {result['parameters_hash']}\")\n",
+    "\n",
+    "            if result.get(\"output_s3_path\"):\n",
+    "                print(f\"  Output S3 Path: {result['output_s3_path']}\")\n",
+    "\n",
+    "            if result.get(\"output_metadata\"):\n",
+    "                print(f\"  Output Metadata: {result['output_metadata']}\")\n",
+    "\n",
+    "            print()\n",
+    "    else:\n",
+    "        print(f\"Error getting results: {response.status_code} - {response.text}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cell-22",
+   "metadata": {},
+   "source": [
+    "## Optional: List All Batch Jobs\n",
+    "\n",
+    "You can also list all batch jobs in your project to see the history of batch processing operations."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cell-23",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# List all parse jobs in the project\n",
+    "response = httpx.get(\n",
+    "    f\"{LLAMA_CLOUD_BASE_URL}/api/v1/beta/batch-processing\",\n",
+    "    headers=headers,\n",
+    "    params={\"project_id\": project_id, \"job_type\": \"parse\", \"limit\": 10},\n",
+    "    timeout=60.0,\n",
+    ")\n",
+    "\n",
+    "if response.status_code == 200:\n",
+    "    jobs_response = response.json()\n",
+    "\n",
+    "    print(f\"\\n📊 Recent Batch Parse Jobs ({jobs_response['total_size']} total)\")\n",
+    "    print(f\"{'='*80}\\n\")\n",
+    "\n",
+    "    for job in jobs_response[\"items\"]:\n",
+    "        status_emoji = (\n",
+    "            \"✅\"\n",
+    "            if job[\"status\"] == \"completed\"\n",
+    "            else \"❌\"\n",
+    "            if job[\"status\"] == \"failed\"\n",
+    "            else \"⏳\"\n",
+    "        )\n",
+    "        print(f\"{status_emoji} Job ID: {job['id']}\")\n",
+    "        print(f\"   Status: {job['status']}\")\n",
+    "        print(f\"   Directory: {job['directory_id']}\")\n",
+    "        print(f\"   Total Items: {job['total_items']}\")\n",
+    "        print(f\"   Completed: {job['processed_items']}\")\n",
+    "        print(f\"   Created: {job['created_at']}\")\n",
+    "        print()\n",
+    "else:\n",
+    "    print(f\"Error listing jobs: {response.status_code} - {response.text}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "uug7591rkq",
+   "metadata": {},
+   "source": [
+    "## Step 7: Retrieve Parsed Text Results\n",
+    "\n",
+    "Once the batch job is complete, each BatchJobItem will have a `job_id` field that maps to a parse job ID. We can use this ID with the standard parse client methods to fetch the actual parsed text results."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "vpp0vxtc0y",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Get all completed items and their job IDs\n",
+    "completed_items = [\n",
+    "    item for item in items_response[\"items\"] if item[\"status\"] == \"completed\"\n",
+    "]\n",
+    "\n",
+    "print(f\"📄 Found {len(completed_items)} completed items\\n\")\n",
+    "print(f\"{'='*80}\\n\")\n",
+    "\n",
+    "# Display the job_id for each completed item\n",
+    "for item in completed_items:\n",
+    "    print(f\"📝 {item['item_name']}\")\n",
+    "    print(f\"   Item ID: {item['item_id']}\")\n",
+    "    print(f\"   Parse Job ID: {item['job_id']}\")\n",
+    "    print()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "4gck6hwpnl6",
+   "metadata": {},
+   "source": [
+    "### Fetch Parsed Text for a Specific Document\n",
+    "\n",
+    "Now let's use the `job_id` to retrieve the actual parsed text content using the parse client methods."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "g191kvgxxvk",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Get the parsed text for the first completed item\n",
+    "if completed_items:\n",
+    "    first_completed = completed_items[0]\n",
+    "\n",
+    "    print(f\"📖 Retrieving parsed text for: {first_completed['item_name']}\")\n",
+    "    print(f\"   Using Parse Job ID: {first_completed['job_id']}\\n\")\n",
+    "    print(f\"{'='*80}\\n\")\n",
+    "\n",
+    "    # Use the job_id to fetch the parse result\n",
+    "    response = httpx.get(\n",
+    "        f\"{LLAMA_CLOUD_BASE_URL}/api/v1/parsing/job/{first_completed['job_id']}/result/text\",\n",
+    "        headers=headers,\n",
+    "        params={\"project_id\": project_id},\n",
+    "        timeout=60.0,\n",
+    "    )\n",
+    "\n",
+    "    if response.status_code == 200:\n",
+    "        parse_result = response.text\n",
+    "\n",
+    "        print(f\"✅ Retrieved parsed text ({len(parse_result)} characters)\\n\")\n",
+    "\n",
+    "        # Display first 1000 characters as a preview\n",
+    "        print(\"Preview (first 1000 characters):\")\n",
+    "        print(\"-\" * 80)\n",
+    "        print(parse_result[:1000])\n",
+    "        print(\"-\" * 80)\n",
+    "\n",
+    "        if len(parse_result) > 1000:\n",
+    "            print(f\"\\n... and {len(parse_result) - 1000} more characters\")\n",
+    "    else:\n",
+    "        print(\n",
+    "            f\"Error retrieving parse result: {response.status_code} - {response.text}\"\n",
+    "        )\n",
+    "else:\n",
+    "    print(\"⚠️  No completed items found to retrieve results from\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "2olccb4l8fj",
+   "metadata": {},
+   "source": [
+    "### Retrieve Parsed Results in Other Formats\n",
+    "\n",
+    "You can also retrieve the parsed results in JSON or Markdown format using different client methods."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "lcqsfxiw0sr",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "if completed_items:\n",
+    "    first_completed = completed_items[0]\n",
+    "\n",
+    "    print(\n",
+    "        f\"📋 Retrieving parse results in different formats for: {first_completed['item_name']}\\n\"\n",
+    "    )\n",
+    "\n",
+    "    # Get as JSON (includes structured data with pages, images, etc.)\n",
+    "    print(\"1️⃣ Retrieving as JSON...\")\n",
+    "    response = httpx.get(\n",
+    "        f\"{LLAMA_CLOUD_BASE_URL}/api/v1/parsing/job/{first_completed['job_id']}/result/json\",\n",
+    "        headers=headers,\n",
+    "        params={\"project_id\": project_id},\n",
+    "        timeout=60.0,\n",
+    "    )\n",
+    "\n",
+    "    if response.status_code == 200:\n",
+    "        json_result = response.json()\n",
+    "        print(f\"   ✅ JSON result with {len(json_result['pages'])} pages\")\n",
+    "        print(f\"      Keys: {list(json_result.keys())}\\n\")\n",
+    "    else:\n",
+    "        print(f\"   Error: {response.status_code}\\n\")\n",
+    "\n",
+    "    # Get as Markdown\n",
+    "    print(\"2️⃣ Retrieving as Markdown...\")\n",
+    "    response = httpx.get(\n",
+    "        f\"{LLAMA_CLOUD_BASE_URL}/api/v1/parsing/job/{first_completed['job_id']}/result/markdown\",\n",
+    "        headers=headers,\n",
+    "        params={\"project_id\": project_id},\n",
+    "        timeout=60.0,\n",
+    "    )\n",
+    "\n",
+    "    if response.status_code == 200:\n",
+    "        markdown_result = response.text\n",
+    "        print(f\"   ✅ Markdown result ({len(markdown_result)} characters)\\n\")\n",
+    "\n",
+    "        # Display markdown preview\n",
+    "        print(\"Markdown Preview (first 500 characters):\")\n",
+    "        print(\"-\" * 80)\n",
+    "        print(markdown_result[:500])\n",
+    "        print(\"-\" * 80)\n",
+    "\n",
+    "        if len(markdown_result) > 500:\n",
+    "            print(f\"\\n... and {len(markdown_result) - 500} more characters\")\n",
+    "    else:\n",
+    "        print(f\"   Error: {response.status_code}\")\n",
+    "else:\n",
+    "    print(\"⚠️  No completed items found to retrieve results from\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "lr61wqkfq3",
+   "metadata": {},
+   "source": [
+    "### Batch Process All Parsed Results\n",
+    "\n",
+    "You can also loop through all completed items to retrieve and process all the parsed results."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "kltydf9xzkl",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Process all completed items\n",
+    "print(f\"🔄 Processing all {len(completed_items)} completed items...\\n\")\n",
+    "print(f\"{'='*80}\\n\")\n",
+    "\n",
+    "all_results = {}\n",
+    "\n",
+    "for item in completed_items:\n",
+    "    print(f\"📄 Processing: {item['item_name']}\")\n",
+    "    print(f\"   Parse Job ID: {item['job_id']}\")\n",
+    "\n",
+    "    try:\n",
+    "        # Retrieve the parsed text for this item\n",
+    "        response = httpx.get(\n",
+    "            f\"{LLAMA_CLOUD_BASE_URL}/api/v1/parsing/job/{item['job_id']}/result/text\",\n",
+    "            headers=headers,\n",
+    "            params={\"project_id\": project_id},\n",
+    "            timeout=60.0,\n",
+    "        )\n",
+    "\n",
+    "        if response.status_code == 200:\n",
+    "            parsed_text = response.text\n",
+    "\n",
+    "            all_results[item[\"item_name\"]] = {\n",
+    "                \"job_id\": item[\"job_id\"],\n",
+    "                \"text\": parsed_text,\n",
+    "                \"length\": len(parsed_text),\n",
+    "            }\n",
+    "\n",
+    "            print(f\"   ✅ Retrieved {len(parsed_text)} characters\")\n",
+    "        else:\n",
+    "            all_results[item[\"item_name\"]] = {\n",
+    "                \"job_id\": item[\"job_id\"],\n",
+    "                \"error\": f\"HTTP {response.status_code}\",\n",
+    "            }\n",
+    "            print(f\"   ❌ Error: HTTP {response.status_code}\")\n",
+    "\n",
+    "    except Exception as e:\n",
+    "        print(f\"   ❌ Error: {str(e)}\")\n",
+    "        all_results[item[\"item_name\"]] = {\"job_id\": item[\"job_id\"], \"error\": str(e)}\n",
+    "\n",
+    "    print()\n",
+    "\n",
+    "print(f\"{'='*80}\")\n",
+    "print(f\"\\n✅ Processed {len(all_results)} items\")\n",
+    "print(f\"\\nSummary:\")\n",
+    "for name, result in all_results.items():\n",
+    "    if \"error\" in result:\n",
+    "        print(f\"  ❌ {name}: Error - {result['error']}\")\n",
+    "    else:\n",
+    "        print(f\"  ✅ {name}: {result['length']:,} characters\")"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3 (ipykernel)",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "1f6bd03d-1b8b-45a0-bc2c-5a13f1a5d8d3",
+   "metadata": {},
+   "source": [
+    "# LM317 Voltage Regulator Datasheet Structured Extraction\n",
+    "\n",
+    "<a href=\"https://colab.research.google.com/github/run-llama/llama_cloud_services/blob/main/examples/extract/lm317_structured_extraction.ipynb\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>\n",
+    "\n",
+    "This notebook demonstrates an agentic document workflow using LlamaExtract to process an LM317 voltage regulator datasheet. In this example, we define a structured extraction schema that converts key technical fields into standardized subfields. For instance, the output voltage is split into a minimum and maximum value with a defined unit, and we capture page citations for each extracted field.\n",
+    "\n",
+    "The target user is an electronics engineer at a component manufacturing company who needs to consolidate datasheet information into a standardized specification sheet for design and quality control.\n",
+    "\n",
+    "This approach reduces manual data entry, improves extraction accuracy and standardization, and provides traceability for each technical detail."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8d1efe6e",
+   "metadata": {},
+   "source": [
+    "> **⚠️ DEPRECATION NOTICE**>> This example uses the deprecated `llama-cloud-services` package, which will be maintained until **May 1, 2026**.>> **Please migrate to:**> - **Python**: `pip install llama-cloud>=1.0` ([GitHub](https://github.com/run-llama/llama-cloud-py))> - **New Package Documentation**: https://docs.cloud.llamaindex.ai/>> The new package provides the same functionality with improved performance and support."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a3b8c8d5-ff3e-48ce-b0b8-29b6b1f517f8",
+   "metadata": {},
+   "source": [
+    "## Use Case Overview\n",
+    "\n",
+    "### Problem\n",
+    "Datasheets like that for the LM317 regulator are often distributed as PDFs containing multiple tables, charts, and complex textual descriptions. Engineers must manually extract technical details such as voltage ranges, dropout voltage, maximum current, input voltage range, and pin configurations. This process is error-prone and time-consuming.\n",
+    "\n",
+    "### Agent Workflow (Combination of Automation and Chat)\n",
+    "1. **Upload Datasheet:** The engineer uploads the LM317 datasheet PDF.  \n",
+    "2. **Structured Extraction:** An automated agent processes the PDF and extracts key technical details into structured fields (e.g., output voltage as a range with separate min/max values).\n",
+    "3. **Interactive Verification:** The engineer can query the agent (via chat) for further details or clarification (e.g., \"Show me the detailed pin configuration extraction\") and review the cited pages.\n",
+    "\n",
+    "**Value Delivered:**\n",
+    "- Up to 70% reduction in manual data extraction time.\n",
+    "- Increased accuracy and standardization with structured fields."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a704e843-54be-4969-842b-713584cb3c35",
+   "metadata": {},
+   "source": [
+    "## Setup and Download Data\n",
+    "\n",
+    "Download the [LM317 Datasheet](https://www.ti.com/lit/ds/symlink/lm317.pdf) and setup LlamaExtract."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "6e5b1f91-8785-44d4-a710-8be1b48b76de",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "!mkdir -p data/lm317_structured_extraction\n",
+    "!wget https://www.ti.com/lit/ds/symlink/lm317.pdf -O data/lm317_structured_extraction/lm317.pdf"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f17b914a-00ed-4b63-8198-69fd7c4a7c62",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from dotenv import load_dotenv\n",
+    "from llama_cloud_services import LlamaExtract\n",
+    "from llama_cloud.core.api_error import ApiError\n",
+    "\n",
+    "# Load environment variables (ensure LLAMA_CLOUD_API_KEY is set in your .env file)\n",
+    "load_dotenv(override=True)\n",
+    "\n",
+    "# Initialize the LlamaExtract client\n",
+    "llama_extract = LlamaExtract(\n",
+    "    project_id=\"<project_id>\",\n",
+    "    organization_id=\"<organization_id>\",\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "ed9f6e9a-96c8-4ee1-8b45-0b6a4f7dbbf1",
+   "metadata": {},
+   "source": [
+    "## Defining a Structured Extraction Schema\n",
+    "\n",
+    "We now define a rich Pydantic schema to extract technical specifications from the LM317 datasheet. In this schema:\n",
+    "\n",
+    "- The **output_voltage** and **input_voltage** fields are structured as ranges with separate minimum and maximum values and a unit.\n",
+    "- The **pin_configuration** field is structured to include a pin count and a descriptive layout.\n",
+    "- Additional technical fields (e.g., dropout voltage, max current) are captured as numbers.\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4f7e9b44-5e69-4b30-9864-cd98f1e2a7d4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from pydantic import BaseModel, Field\n",
+    "from typing import List\n",
+    "\n",
+    "\n",
+    "class VoltageRange(BaseModel):\n",
+    "    min_voltage: float = Field(..., description=\"Minimum voltage in volts\")\n",
+    "    max_voltage: float = Field(..., description=\"Maximum voltage in volts\")\n",
+    "    unit: str = Field(\"V\", description=\"Voltage unit\")\n",
+    "\n",
+    "\n",
+    "class PinConfiguration(BaseModel):\n",
+    "    pin_count: int = Field(..., description=\"Number of pins\")\n",
+    "    layout: str = Field(..., description=\"Detailed pin layout description\")\n",
+    "\n",
+    "\n",
+    "class LM317Spec(BaseModel):\n",
+    "    component_name: str = Field(..., description=\"Name of the component\")\n",
+    "    output_voltage: VoltageRange = Field(\n",
+    "        ..., description=\"Output voltage range specification\"\n",
+    "    )\n",
+    "    dropout_voltage: float = Field(..., description=\"Dropout voltage in volts\")\n",
+    "    max_current: float = Field(..., description=\"Maximum current rating in amperes\")\n",
+    "    input_voltage: VoltageRange = Field(\n",
+    "        ..., description=\"Input voltage range specification\"\n",
+    "    )\n",
+    "    pin_configuration: PinConfiguration = Field(\n",
+    "        ..., description=\"Pin configuration details\"\n",
+    "    )\n",
+    "    features: List[str] = Field([], description=\"List of additional technical features\")\n",
+    "\n",
+    "\n",
+    "class LM317Schema(BaseModel):\n",
+    "    specs: List[LM317Spec] = Field(\n",
+    "        ..., description=\"List of extracted LM317 technical specifications\"\n",
+    "    )"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "e0508e38-35be-446c-afe7-129e39553281",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "try:\n",
+    "    existing_agent = llama_extract.get_agent(name=\"lm317-datasheet\")\n",
+    "    if existing_agent:\n",
+    "        llama_extract.delete_agent(existing_agent.id)\n",
+    "except ApiError as e:\n",
+    "    if e.status_code == 404:\n",
+    "        pass\n",
+    "    else:\n",
+    "        raise"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "bb197dfd-dd37-459e-8953-cc1b12f25bdd",
+   "metadata": {},
+   "source": [
+    "Here we use our balanced extraction mode."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "e3defc0a-c685-4fbd-bbb1-1270f1442e72",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from llama_cloud import ExtractConfig\n",
+    "\n",
+    "extract_config = ExtractConfig(\n",
+    "    extraction_mode=\"BALANCED\",\n",
+    ")\n",
+    "\n",
+    "agent = llama_extract.create_agent(\n",
+    "    name=\"lm317-datasheet\", data_schema=LM317Schema, config=extract_config\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c0a0f9f9-2ef3-4a38-bd74-68d2c2e9e2d8",
+   "metadata": {},
+   "source": [
+    "## Extracting Information from the LM317 Datasheet\n",
+    "\n",
+    "For this demonstration, please download a publicly available LM317 voltage regulator datasheet (for example, from Texas Instruments) and save it as `lm317.pdf` in the `./data` directory. Then run the cell below to extract the structured technical specifications."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "c58e8b7a-8f9b-46f3-8f72-3c2f96b49e8f",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "Uploading files: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████| 1/1 [00:01<00:00,  1.08s/it]\n",
+      "Creating extraction jobs: 100%|████████████████████████████████████████████████████████████████████████████████████████████████| 1/1 [00:00<00:00,  1.96it/s]\n",
+      "Extracting files: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████| 1/1 [01:27<00:00, 87.38s/it]\n"
+     ]
+    }
+   ],
+   "source": [
+    "# Path to the LM317 datasheet PDF\n",
+    "lm317_pdf = \"./data/lm317_structured_extraction/lm317.pdf\"\n",
+    "\n",
+    "# Extract structured technical specifications from the datasheet\n",
+    "lm317_extract = agent.extract(lm317_pdf)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1a2e2e44-6c48-4a38-a6de-5f2f3c7d4d8b",
+   "metadata": {},
+   "source": [
+    "## Assessing the Extraction Results\n",
+    "\n",
+    "The output will be a consolidated list of LM317 technical specifications. For each entry, you should see structured fields including:\n",
+    "\n",
+    "- **component_name**\n",
+    "- **output_voltage** as a range (with separate `min_voltage` and `max_voltage` plus `unit`)\n",
+    "- **dropout_voltage** and **max_current** as numbers\n",
+    "- **input_voltage** as a structured range\n",
+    "- **pin_configuration** with a `pin_count` and `layout`\n",
+    "- **features** (if available)\n",
+    "\n",
+    "This structured approach makes it easier to standardize the information for downstream integration and verification. Engineers can click on the cited page numbers (in a UI that supports it) to validate the extraction."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "fb2abc44-7c9b-4b19-958e-d0d7b390ae57",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "{'specs': [{'component_name': 'LM317',\n",
+       "   'output_voltage': {'min_voltage': 1.25, 'max_voltage': 37.0, 'unit': 'V'},\n",
+       "   'dropout_voltage': 0.0,\n",
+       "   'max_current': 1.5,\n",
+       "   'input_voltage': {'min_voltage': 4.25, 'max_voltage': 40.0, 'unit': 'V'},\n",
+       "   'pin_configuration': {'pin_count': 3,\n",
+       "    'layout': '1: ADJUST, 2: OUTPUT, 3: INPUT'},\n",
+       "   'features': ['Output voltage range adjustable from 1.25 V to 37 V',\n",
+       "    'Output current greater than 1.5 A',\n",
+       "    'Internal short-circuit current limiting',\n",
+       "    'Thermal overload protection',\n",
+       "    'Output safe-area compensation']}]}"
+      ]
+     },
+     "execution_count": null,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# Display the extraction results\n",
+    "lm317_extract.data"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c7a2a523-095e-40bf-b713-f509c13a7747",
+   "metadata": {},
+   "source": [
+    "You can also see the output result in the UI."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "dc22dfa5-b667-4fb0-8dbe-24e401b12389",
+   "metadata": {},
+   "source": [
+    "![](data/lm317_structured_extraction/lm317_extraction.png)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e0e0c12a-9f89-4bb3-b40d-3e9f7c6d2fef",
+   "metadata": {},
+   "source": [
+    "## Conclusion\n",
+    "\n",
+    "This notebook demonstrated how to use LlamaExtract with a structured extraction schema for the LM317 voltage regulator datasheet. By defining detailed subfields (such as splitting voltage ranges into minimum and maximum values, and structuring the pin configuration), we ensure that the extracted data is standardized and traceable through page citations. This approach minimizes manual effort and improves accuracy, providing a robust example of an agentic document workflow for technical documentation processing.\n",
+    "\n",
+    "Feel free to modify or extend the schema to capture additional technical details or to suit your own use cases."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "llama_parse",
+   "language": "python",
+   "name": "llama_parse"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
 
 {
  "cells": [

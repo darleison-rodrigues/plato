@@ -60,13 +60,19 @@ class OllamaClient:
         self._client: Optional[httpx.AsyncClient] = None
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
+    def _create_http_client(self) -> httpx.AsyncClient:
+        """Helper to create a configured HTTP client."""
+        return httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=httpx.Timeout(self.timeout_generate, connect=self.timeout_connect),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+            headers={"Content-Type": "application/json"}
+        )
+
     async def __aenter__(self):
-        """Context manager support (preferred usage)."""
+        """Standard usage via async context manager."""
         if not self._client:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout_generate, connect=self.timeout_connect),
-                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
-            )
+            self._client = self._create_http_client()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -74,17 +80,6 @@ class OllamaClient:
         if self._client:
             await self._client.aclose()
             self._client = None
-
-    @property
-    def client(self) -> httpx.AsyncClient:
-        """Get the internal client, creating it if it doesn't exist."""
-        if self._client is None:
-            # Auto-init if not using context manager, though discouraged
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout_generate, connect=self.timeout_connect),
-                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
-            )
-        return self._client
 
     @retry(
         retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
@@ -94,9 +89,12 @@ class OllamaClient:
     )
     async def _post(self, endpoint: str, payload: Dict[str, Any], timeout: httpx.Timeout) -> httpx.Response:
         """Internal POST method with retries for transient failures."""
-        url = f"{self.base_url}/api/{endpoint}"
+        if not self._client:
+            raise RuntimeError("OllamaClient must be used as an async context manager (async with).")
+            
+        url = f"/api/{endpoint}" # base_url is in the client
         try:
-            return await self.client.post(url, json=payload, timeout=timeout)
+            return await self._client.post(url, json=payload, timeout=timeout)
         except httpx.ConnectError:
             raise OllamaError(f"Could not connect to Ollama at {self.base_url}. Is it running?")
 
@@ -120,8 +118,11 @@ class OllamaClient:
         
         timeout = httpx.Timeout(connect=self.timeout_connect, read=None, write=5.0, pool=5.0)
         
+        if not self._client:
+            raise RuntimeError("OllamaClient must be used as an async context manager (async with).")
+            
         async with self._semaphore:
-            async with self.client.stream("POST", f"{self.base_url}/api/generate", json=payload, timeout=timeout) as response:
+            async with self._client.stream("POST", "/api/generate", json=payload, timeout=timeout) as response:
                 if response.status_code == 404:
                     raise ModelNotFoundError(f"Model '{model}' not found.")
                 response.raise_for_status()
@@ -169,7 +170,6 @@ class OllamaClient:
 
     async def embeddings(self, model: str, prompt: str) -> List[float]:
         """Generate embedding for a single text."""
-        url = f"{self.base_url}/api/embeddings"
         payload = {"model": model, "prompt": prompt}
         timeout = httpx.Timeout(connect=self.timeout_connect, read=self.timeout_embed)
         
@@ -193,16 +193,36 @@ class OllamaClient:
         batch_size: int = 10
     ) -> List[List[float]]:
         """Process multiple embedding requests efficiently."""
-        # Ollama currently doesn't have a single-call batch embedding API that is standard,
-        # so we gather multiple individual calls while respecting the semaphore.
         tasks = [self.embeddings(model, prompt) for prompt in prompts]
         return await asyncio.gather(*tasks)
 
+    async def check_models(self, required_models: List[str]) -> Dict[str, bool]:
+        """
+        Checks which of the required models are available on the Ollama host.
+        """
+        try:
+            available = await self.list_models()
+            available_names = {m.name for m in available}
+            available_base = {m.name.split(":")[0] for m in available}
+            
+            results = {}
+            for model in required_models:
+                base = model.split(":")[0]
+                results[model] = (model in available_names) or (base in available_base)
+            
+            return results
+        except OllamaError as e:
+            logger.error(f"Failed to check model availability: {e}")
+            return {model: False for model in required_models}
+
     async def list_models(self) -> List[ModelInfo]:
         """List all downloaded models."""
+        if not self._client:
+            raise RuntimeError("OllamaClient must be used as an async context manager (async with).")
+            
         async with self._semaphore:
             try:
-                response = await self.client.get(f"{self.base_url}/api/tags")
+                response = await self._client.get("/api/tags")
                 response.raise_for_status()
                 data = response.json()
                 return [
@@ -215,13 +235,48 @@ class OllamaClient:
                     )
                     for m in data.get("models", [])
                 ]
-            except Exception as e:
-                raise OllamaError(f"Failed to list models: {e}")
+            except httpx.HTTPError as e:
+                raise OllamaError(f"Ollama connection failed: {e}")
+            except (json.JSONDecodeError, KeyError) as e:
+                raise OllamaError(f"Failed to parse Ollama response: {e}")
 
     async def health_check(self) -> bool:
         """Quick check if Ollama is responsive."""
-        try:
-            response = await self.client.get(f"{self.base_url}/", timeout=2.0)
-            return response.status_code == 200
-        except:
+        if not self._client:
             return False
+            
+        try:
+            response = await self._client.get("/", timeout=2.0)
+            return response.status_code == 200
+        except (httpx.HTTPError, asyncio.TimeoutError):
+            return False
+
+class OllamaEmbeddingFunction:
+    """
+    Adapter for ChromaDB to use our OllamaClient.
+    """
+    def __init__(self, model: str, base_url: str = "http://localhost:11434"):
+        self.model = model
+        self.base_url = base_url
+
+    def __call__(self, input: List[str]) -> List[List[float]]:
+        """Synchronous wrapper for ChromaDB compatibility."""
+        async def _get_embeddings():
+            async with OllamaClient(base_url=self.base_url) as client:
+                return await client.embeddings_batch(self.model, input)
+        
+        try:
+            # If we are already in an async loop, we can't use run_until_complete
+            # or asyncio.run. We need a different approach for true async usage.
+            # However, for ChromaDB's local indexing, it's often called from sync code.
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # In a TUI (running loop), we should ideally call embedding indexing asynchronously.
+                # If we MUST do it sync, we use a thread.
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    return executor.submit(lambda: asyncio.run(_get_embeddings())).result()
+            return loop.run_until_complete(_get_embeddings())
+        except Exception as e:
+            logger.error(f"OllamaEmbeddingFunction failed: {e}")
+            raise OllamaError(f"Embedding generation failed: {e}")

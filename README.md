@@ -1,4 +1,4 @@
-![Platograph Logo](logo.png)
+![Plato Logo](logo.png)
 
 ```ascii
                d8b                                       
@@ -13,127 +13,63 @@
  ?8P    
 ```
 
-> *A platypus approach to research knowledge graphs.*
+> **PLATO**: A high-integrity, local-first Context Preparation Assistant for independent scholars.
 
-**PLATO** is a local-first **Context Preparation Assistant** for independent researchers, product managers, and developers. Like the platypus—a unique hybrid of different animals—PLATO combines **PDF processing**, **Vector Search**, and **Knowledge Graphs** into one cohesive tool.
+**PLATO** is designed to bridge the gap between static PDFs and AI-ready context. Unlike generic "Chat with PDF" tools, PLATO focuses on **Scholarship Workflows**—summarizing, auditing, and extracting insights using lightweight, local models that respect your privacy and hardware constraints.
 
-an intelligent local-first document processor that creates
-  structured knowledge for you to chat with and use in other projects.
-
-
-## Why "PLATO"?
-Just as the platypus is one of nature's most unique creatures, your research deserves a unique approach. We don't try to build a "genius AGent" that does the thinking for you. Instead, we use lightweight (1B) models to **prepare the context** so *you* (or a larger model) can do the deep work.
-
-- 🦫 **Hybrid Intelligence**: Vector search + Knowledge graphs.
+## 🦫 Why PLATO?
+- 🦫 **Hybrid Intelligence**: Vector search + Structured Context.
 - 🏠 **Privacy-first**: All processing happens locally on your machine (via Ollama).
-- 🧩 **The Contexter Pattern**: Efficient resource management for your PDFs and models.
+- 🧩 **Zero-Patch Philosophy**: 100% compatible with Python 3.14+ by using native NumPy vector storage (No ChromaDB).
 - ⚡ **Lightweight**: Optimized for consumer hardware (M1/M2 Macs with 8GB RAM).
+- 🏠 **Zero-Cloud**: Your documents never leave your machine.
+- 🧩 **Schema-Driven**: Guaranteed structured output using JSON Schema validation.
+- 🏛️ **Hardened Core**: Sandboxed template execution and multi-instance safe vector storage.
 
-## The Workflow
-1.  **Scan**: Dump your PDFs into a folder.plato scans them using a fast 1B model to understand what they are.
-2.  **Suggest**: The agent looks at your collection and suggests workflows (e.g., "Build a comparison table," "Extract timeline").
-3.  **Build**: You approve, and plato constructs a structured `context.md` file properly 
+## 🖥️ The Interface (TUI)
 
-> A local-first, schema-driven knowledge extraction tool.
+PLATO features a rich Textual User Interface (TUI) designed for speed:
+- **Scholar Mascot**: Your assistant is always visible in the sidebar.
+- **File Browser**: Integrated directory tree linked to your research folder.
+- **Action Picker**: Select from pre-defined tasks (Summary, Insights, Audit) using arrow keys.
+- **Live Stream**: Watch the reasoning process in real-time with Markdown support.
+- **Hardware Monitor**: Real-time RAM tracking vs your hardware budget.
 
-**Platograph** is an intelligent document processor designed for researchers, developers, and product managers. It creates a local, self-hosted knowledge base from your documents and lets you interact with it through a conversational chat interface, all powered by local LLMs via Ollama.
+## 🚀 Quick Start
 
-The goal of plato is to provide a frictionless, "plug and play" experience for turning a folder of documents into a queryable knowledge graph.
+### 1. Prerequisites
+Install [Ollama](https://ollama.com) and ensure it's running.
 
-## Core Features
-
-- **🏠 Local First & Private**: All processing and data storage happens on your machine. Your documents never leave your computer.
-- **🧠 Intelligent Extraction**: Uses local LLMs to build a knowledge graph and vector index from your documents, enabling both semantic search and structured queries.
-- **💬 Conversational Interface**: Use the `chat` command to ask questions and get answers directly from your knowledge base.
-- **🧩 Simple & File-Based**: No external databases or complex setup required. The knowledge graph is stored in your project directory.
-- **📊 Visualization**: Automatically generate interactive knowledge graph diagrams (Mermaid, GraphViz) to see connections in your data.
-- **📝 Context Export**: Export your knowledge base to structured Markdown (`context.md`) specially formatted for LLM context windows.
-- **⚙️ Configurable Models**: Easily configure which Ollama models to use for different tasks (e.g., a powerful model for extraction, a fast model for chat).
-
-## Quick Start
-
-**1. Prerequisites**
-
-Ensure you have [Ollama](https://ollama.com) installed and running.
-
-**2. Install Models**
-
-Pull the default models thatplato uses. You can change these later in `config.yaml`.
+### 2. Model Setup
+PLATO uses specific model profiles to ensure stability on 8GB/16GB machines. Pull the default set:
 
 ```bash
-ollama pull lfm2.5-thinking
-ollama pull qwen2.5-coder:3b
-ollama pull deepseek-ocr
-ollama pull nomic-embed-text
-ollama pull dolphin-phi
+ollama pull lfm2.5-thinking:1.2b
+ollama pull qwen2.5-coder:1.5b
+ollama pull embeddinggemma:latest
+ollama pull deepseek-ocr:3b
 ```
 
-**3. Installplato**
-
-Clone the repository and install it in editable mode.
-
+### 3. Installation
 ```bash
 git clone <repository_url>
 cd plato
 pip install -e .
 ```
 
-**4. Process Your Documents**
-
-Place your documents (PDFs, etc.) into a directory (e.g., `my_papers/`) and run the `process` command.
-
+### 4. Launch
+Launch the Scholarship Interface:
 ```bash
-plato process ./my_papers/
+PYTHONPATH=src python3 -m plato.tui.app
 ```
 
-Platograph will read the documents, build the knowledge graph, and store it locally in the `./storage` directory.
+## 🛠️ Configuration
 
-**5. Chat With Your Knowledge**
+Edit `src/plato/core/models.yaml` to switch between hardware profiles:
+- `m1_8gb`: Optimized for base Apple Silicon laptops (uses 1.2B/1.5B models).
+- `performance`: Optimized for Mac Studios/Pros (uses 3B+ models).
 
-Start a conversation with your newly created knowledge base.
-
-```bash
-plato chat
-```
+Source directories can be configured in `src/plato/config.py` (Default: `~/Documents/plato`).
 
 ---
-
-## Command Reference
-
-### `plato process <directory> [--concurrency N]`
-
-This is the core command for ingesting documents.
-
-- **`directory`**: Path to the directory containing your documents.
-- **`--concurrency N`**: (Optional) Number of concurrent files to process. Defaults to 2. Use 1 for low-RAM devices, 4+ for M1/M2/M3.
-
-### `plato chat`
-
-Starts an interactive chat session with the knowledge base you've built.
-
-- Ask questions in natural language.
-- Type `exit` or `quit` to end the session.
-
-### `plato visualize`
-
-Generates an interactive visualization of your knowledge graph.
-
-- **`--format`**: Output format (`mermaid`, `graphviz`, `json`). Defaults to `mermaid`.
-- **`--limit N`**: Max nodes to display (default 50).
-- Opens an HTML file with the interactive graph.
-
-### `plato export`
-
-Exports the knowledge base for external use.
-
-- **`--format`**: Output format (`markdown`, `json`). Defaults to `markdown`.
-- Generates a `context.md` file ideal for pasting into LLM prompts.
-
----
-
-## 🗺️ Roadmap & Backlog
-
-See [BACKLOG.md](BACKLOG.md) for our detailed roadmap, including planned features like Entity Resolution, Deep Search, and UI improvements.
-
----
-*Built with ❤️ for the curious.*
+*Built with ❤️ for scholars who value privacy and local power.*

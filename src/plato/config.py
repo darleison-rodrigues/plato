@@ -75,6 +75,7 @@ class OllamaConfig(BaseModel):
         return self.reasoning_model
 
 class PipelineConfig(BaseModel):
+    source_dir: str = Field(default="~/Documents/plato", description="Directory to watch for PDFs")
     chunk_size: int = Field(default=512, ge=100, le=4096)
     chunk_overlap: int = Field(default=50, ge=0, le=1024)
     output_dir: str = Field(default="output")
