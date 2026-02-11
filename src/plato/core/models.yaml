@@ -2,7 +2,7 @@
 # This is the source of truth for all models used in the application.
 
 embeddings:
-  default: "embeddinggemma:latest"
+  default: "nomic-embed-text:latest"
   dim: 768
   provider: "ollama"
 
@@ -26,10 +26,10 @@ reasoning:
 
 profiles:
   m1_8gb:
-    embedding: "embeddinggemma:latest"
+    embedding: "nomic-embed-text:latest"
     ocr: "deepseek-ocr:3b"
     reasoning: "lfm2.5-thinking:1.2b" # Eco profile to ensure stability
   performance:
-    embedding: "embeddinggemma:latest"
+    embedding: "nomic-embed-text:latest"
     ocr: "deepseek-ocr:3b"
     reasoning: "qwen2.5-coder:3b"
